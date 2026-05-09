@@ -102,6 +102,7 @@ import * as css from './RoomTimeline.css';
 import { inSameDay, minuteDifference, timeDayMonthYear, today, yesterday } from '../../utils/time';
 import { createMentionElement, isEmptyEditor, moveCursor } from '../../components/editor';
 import { roomIdToReplyDraftAtomFamily } from '../../state/room/roomInputDrafts';
+import { roomRightPanelAtomFamily } from '../../state/room/roomRightPanel';
 import { usePowerLevelsContext } from '../../hooks/usePowerLevels';
 import { GetContentCallback, MessageEvent, StateEvent } from '../../../types/matrix/room';
 import { useKeyDown } from '../../hooks/useKeyDown';
@@ -455,6 +456,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
   const ignoredUsersSet = useMemo(() => new Set(ignoredUsersList), [ignoredUsersList]);
 
   const setReplyDraft = useSetAtom(roomIdToReplyDraftAtomFamily(room.roomId));
+  const setRightPanel = useSetAtom(roomRightPanelAtomFamily(room.roomId));
   const powerLevels = usePowerLevelsContext();
   const creators = useRoomCreators(room);
 
@@ -912,6 +914,28 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
     [handleOpenEvent]
   );
 
+  // Open the thread drawer for a given event. Per R15, if the target itself is a
+  // thread reply, walk to its threadRootId so we always open the drawer at the
+  // root, not at a mid-chain reply.
+  const openThread = useCallback(
+    (eventId: string) => {
+      const targetEvent = room.findEventById(eventId);
+      const rootEventId = targetEvent?.threadRootId ?? eventId;
+      setRightPanel({ phase: 'thread', rootEventId });
+    },
+    [room, setRightPanel]
+  );
+
+  const handleThreadIndicatorClick: MouseEventHandler<HTMLButtonElement> = useCallback(
+    (evt) => {
+      evt.stopPropagation();
+      const targetId = evt.currentTarget.getAttribute('data-event-id');
+      if (!targetId) return;
+      openThread(targetId);
+    },
+    [openThread]
+  );
+
   const handleUserClick: MouseEventHandler<HTMLButtonElement> = useCallback(
     (evt) => {
       evt.preventDefault();
@@ -1067,6 +1091,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
                   replyEventId={replyEventId}
                   threadRootId={threadRootId}
                   onClick={handleOpenReply}
+                  onThreadClick={handleThreadIndicatorClick}
                   getMemberPowerTag={getMemberPowerTag}
                   accessibleTagColors={accessiblePowerTagColors}
                   legacyUsernameColor={legacyUsernameColor || direct}
@@ -1085,7 +1110,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
                 />
               )
             }
-            threadSummary={<ThreadSummary room={room} mEvent={mEvent} />}
+            threadSummary={<ThreadSummary room={room} mEvent={mEvent} onOpen={openThread} />}
             hideReadReceipts={hideActivity}
             showDeveloperTools={showDeveloperTools}
             memberPowerTag={getMemberPowerTag(senderId)}
@@ -1150,6 +1175,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
                   replyEventId={replyEventId}
                   threadRootId={threadRootId}
                   onClick={handleOpenReply}
+                  onThreadClick={handleThreadIndicatorClick}
                   getMemberPowerTag={getMemberPowerTag}
                   accessibleTagColors={accessiblePowerTagColors}
                   legacyUsernameColor={legacyUsernameColor || direct}
@@ -1168,7 +1194,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
                 />
               )
             }
-            threadSummary={<ThreadSummary room={room} mEvent={mEvent} />}
+            threadSummary={<ThreadSummary room={room} mEvent={mEvent} onOpen={openThread} />}
             hideReadReceipts={hideActivity}
             showDeveloperTools={showDeveloperTools}
             memberPowerTag={getMemberPowerTag(mEvent.getSender() ?? '')}

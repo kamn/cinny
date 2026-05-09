@@ -5,6 +5,7 @@ import { isKeyHotkey } from 'is-hotkey';
 import { useAtom, useAtomValue } from 'jotai';
 import { RoomView } from './RoomView';
 import { MembersDrawer } from './MembersDrawer';
+import { ThreadDrawer } from './ThreadDrawer';
 import { ScreenSize, useScreenSizeContext } from '../../hooks/useScreenSize';
 import { useSetting } from '../../state/hooks/settings';
 import { settingsAtom } from '../../state/settings';
@@ -89,6 +90,20 @@ export function Room() {
             <MembersDrawer key={room.roomId} room={room} members={members} />
           </>
         )}
+        {!callView &&
+          screenSize === ScreenSize.Desktop &&
+          rightPanel !== null &&
+          typeof rightPanel === 'object' &&
+          rightPanel.phase === 'thread' && (
+            <>
+              <Line variant="Background" direction="Vertical" size="300" />
+              <ThreadDrawer
+                key={`${room.roomId}:${rightPanel.rootEventId}`}
+                room={room}
+                rootEventId={rightPanel.rootEventId}
+              />
+            </>
+          )}
       </Box>
     </PowerLevelsContextProvider>
   );
