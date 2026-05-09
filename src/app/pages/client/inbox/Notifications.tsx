@@ -26,7 +26,7 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { HTMLReactParserOptions } from 'html-react-parser';
 import { Opts as LinkifyOpts } from 'linkifyjs';
-import { useAtomValue, useSetAtom } from 'jotai';
+import { useAtomValue } from 'jotai';
 import { Page, PageContent, PageContentCenter, PageHeader } from '../../../components/page';
 import { useMatrixClient } from '../../../hooks/useMatrixClient';
 import { getMxIdLocalPart, mxcUrlToHttp } from '../../../utils/matrix';
@@ -73,7 +73,6 @@ import * as customHtmlCss from '../../../styles/CustomHtml.css';
 import { useRoomNavigate } from '../../../hooks/useRoomNavigate';
 import { useRoomUnread } from '../../../state/hooks/unread';
 import { roomToUnreadAtom } from '../../../state/room/roomToUnread';
-import { roomRightPanelAtomFamily } from '../../../state/room/roomRightPanel';
 import { markAsRead } from '../../../utils/notifications';
 import { ContainerColor } from '../../../styles/ContainerColor.css';
 import { VirtualTile } from '../../../components/virtualizer';
@@ -207,7 +206,7 @@ type RoomNotificationsGroupProps = {
   mediaAutoLoad?: boolean;
   urlPreview?: boolean;
   hideActivity: boolean;
-  onOpen: (roomId: string, eventId: string) => void;
+  onOpen: (roomId: string, eventId: string, opts?: { threadRootId?: string }) => void;
   legacyUsernameColor?: boolean;
   hour24Clock: boolean;
   dateFormatString: string;
@@ -399,21 +398,16 @@ function RoomNotificationsGroupComp({
     }
   );
 
-  const setRightPanel = useSetAtom(roomRightPanelAtomFamily(room.roomId));
-
   const handleOpenClick: MouseEventHandler = (evt) => {
     const eventId = evt.currentTarget.getAttribute('data-event-id');
     if (!eventId) return;
     onOpen(room.roomId, eventId);
   };
 
-  // For threaded notifications: set the destination room's right-panel atom to
-  // the thread phase BEFORE navigating. Room.tsx's init effect uses a
-  // function-update that preserves any pre-set non-null atom value, so the
-  // drawer phase survives Room mount.
+  // For threaded notifications, navigate to the room with ?thread=<root> in
+  // one step so Room.tsx mounts with thread phase already set in the URL.
   const openInThread = (rootEventId: string, eventId: string) => {
-    setRightPanel({ phase: 'thread', rootEventId });
-    onOpen(room.roomId, eventId);
+    onOpen(room.roomId, eventId, { threadRootId: rootEventId });
   };
   const handleMarkAsRead = () => {
     markAsRead(mx, room.roomId, hideActivity);

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HTMLReactParserOptions } from 'html-react-parser';
 import {
   Avatar,
@@ -13,13 +13,17 @@ import {
   TooltipProvider,
   config,
 } from 'folds';
-import { useSetAtom } from 'jotai';
 import { Opts as LinkifyOpts } from 'linkifyjs';
-import { MatrixEvent, MatrixEventEvent, Room, RoomEvent, Thread, ThreadEvent } from 'matrix-js-sdk';
-import classNames from 'classnames';
-
-import * as css from './ThreadDrawer.css';
-import { ContainerColor } from '../../styles/ContainerColor.css';
+import {
+  EventType,
+  MatrixEvent,
+  MatrixEventEvent,
+  Room,
+  RoomEvent,
+  Thread,
+  ThreadEvent,
+} from 'matrix-js-sdk';
+import * as css from './ThreadView.css';
 import { useEditor } from '../../components/editor';
 import { useMatrixClient } from '../../hooks/useMatrixClient';
 import { useMediaAuthentication } from '../../hooks/useMediaAuthentication';
@@ -35,15 +39,15 @@ import {
   makeMentionCustomProps,
   renderMatrixMention,
 } from '../../plugins/react-custom-html-parser';
-import { getMemberAvatarMxc, getMemberDisplayName, getEditedEvent } from '../../utils/room';
+import { getEditedEvent, getMemberAvatarMxc, getMemberDisplayName } from '../../utils/room';
 import { getMxIdLocalPart, mxcUrlToHttp } from '../../utils/matrix';
 import {
   AvatarBase,
   ImageContent,
   MessageNotDecryptedContent,
   MessageUnsupportedContent,
-  ModernLayout,
   MSticker,
+  ModernLayout,
   RedactedContent,
   Time,
   Username,
@@ -56,12 +60,12 @@ import { ImageViewer } from '../../components/image-viewer';
 import { UserAvatar } from '../../components/user-avatar';
 import { GetContentCallback, MessageEvent } from '../../../types/matrix/room';
 import * as customHtmlCss from '../../styles/CustomHtml.css';
-import { roomRightPanelAtomFamily } from '../../state/room/roomRightPanel';
-import { RoomInput } from './RoomInput';
+import { Page } from '../../components/page';
 import { useRoomPermissions } from '../../hooks/useRoomPermissions';
 import { usePowerLevelsContext } from '../../hooks/usePowerLevels';
 import { useRoomCreators } from '../../hooks/useRoomCreators';
-import { EventType } from 'matrix-js-sdk';
+import { RoomInput } from './RoomInput';
+import { RoomInputPlaceholder } from './RoomInputPlaceholder';
 
 type ThreadEventItemProps = {
   room: Room;
@@ -94,7 +98,7 @@ function ThreadEventItem({
     <ModernLayout
       before={
         <AvatarBase>
-          <Avatar size="200">
+          <Avatar size="300">
             <UserAvatar
               userId={senderId}
               src={
@@ -104,7 +108,7 @@ function ThreadEventItem({
                   : undefined
               }
               alt={displayName}
-              renderFallback={() => <Icon size="100" src={Icons.User} filled />}
+              renderFallback={() => <Icon size="200" src={Icons.User} filled />}
             />
           </Avatar>
         </AvatarBase>
@@ -112,7 +116,7 @@ function ThreadEventItem({
     >
       <Box gap="200" alignItems="Baseline">
         <Username>
-          <Text as="span" size="T300" truncate>
+          <Text as="span" size="T400" truncate>
             <UsernameBold>{displayName}</UsernameBold>
           </Text>
         </Username>
@@ -123,55 +127,62 @@ function ThreadEventItem({
   );
 }
 
-type ThreadDrawerHeaderProps = {
+type ThreadViewHeaderProps = {
   room: Room;
+  onBack: () => void;
 };
 
-function ThreadDrawerHeader({ room }: ThreadDrawerHeaderProps) {
-  const setRightPanel = useSetAtom(roomRightPanelAtomFamily(room.roomId));
+function ThreadViewHeader({ room, onBack }: ThreadViewHeaderProps) {
+  const roomName = room.name || 'Room';
 
   return (
-    <Header className={css.ThreadDrawerHeader} variant="Surface" size="600">
+    <Header className={css.ThreadViewHeader} variant="Surface" size="600">
       <Box grow="Yes" alignItems="Center" gap="200">
-        <Box grow="Yes" alignItems="Center" gap="200">
-          <Icon size="200" src={Icons.Thread} />
-          <Text size="H5" truncate>
-            Thread
-          </Text>
-        </Box>
         <Box shrink="No" alignItems="Center">
           <TooltipProvider
             position="Bottom"
-            align="End"
+            align="Start"
             offset={4}
             tooltip={
               <Tooltip>
-                <Text>Close</Text>
+                <Text>Back to {roomName}</Text>
               </Tooltip>
             }
           >
             {(triggerRef) => (
-              <IconButton ref={triggerRef} variant="Surface" onClick={() => setRightPanel(null)}>
-                <Icon src={Icons.Cross} />
+              <IconButton ref={triggerRef} variant="Surface" onClick={onBack}>
+                <Icon src={Icons.ArrowLeft} />
               </IconButton>
             )}
           </TooltipProvider>
+        </Box>
+        <Box grow="Yes" alignItems="Center" gap="200">
+          <Icon size="200" src={Icons.Thread} />
+          <Box direction="Column">
+            <Text size="H5" truncate>
+              Thread
+            </Text>
+            <Text size="T200" priority="300" truncate>
+              {roomName}
+            </Text>
+          </Box>
         </Box>
       </Box>
     </Header>
   );
 }
 
-type ThreadDrawerProps = {
+type ThreadViewProps = {
   room: Room;
   rootEventId: string;
+  onBack: () => void;
 };
 
-export function ThreadDrawer({ room, rootEventId }: ThreadDrawerProps) {
+export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
   const mx = useMatrixClient();
   const useAuthentication = useMediaAuthentication();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputContainerRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLDivElement>(null);
   const editor = useEditor();
   const powerLevels = usePowerLevelsContext();
@@ -195,8 +206,6 @@ export function ThreadDrawer({ room, rootEventId }: ThreadDrawerProps) {
 
     sync();
 
-    // Room re-emits ThreadEvent.Update from each thread (room.js:reEmitter), and
-    // RoomEvent.Timeline fires when new events arrive in any timeline set.
     room.on(ThreadEvent.New, sync);
     room.on(ThreadEvent.Update, sync);
     room.on(RoomEvent.Timeline, sync);
@@ -209,6 +218,29 @@ export function ThreadDrawer({ room, rootEventId }: ThreadDrawerProps) {
       room.off(MatrixEventEvent.Decrypted, sync);
     };
   }, [room, rootEventId]);
+
+  const handleBack = useCallback(() => {
+    onBack();
+  }, [onBack]);
+
+  // Make plain history navigation also exit threads — pressing Esc with focus
+  // on the body returns to the room timeline. (Composer Esc is handled by
+  // RoomInput for clearing reply drafts; that takes precedence.)
+  useEffect(() => {
+    const onKey = (evt: KeyboardEvent) => {
+      if (evt.key === 'Escape') {
+        const active = document.activeElement;
+        const isInComposer =
+          active instanceof HTMLElement &&
+          (active.isContentEditable || active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
+        if (!isInComposer) {
+          handleBack();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [handleBack]);
 
   const mentionClickHandler = useMentionClickHandler(room.roomId);
   const spoilerClickHandler = useSpoilerClickHandler();
@@ -332,20 +364,15 @@ export function ThreadDrawer({ room, rootEventId }: ThreadDrawerProps) {
   const replies: MatrixEvent[] = useMemo(() => {
     if (!thread) return [];
     const events: MatrixEvent[] = thread.liveTimeline.getEvents();
-    // Drop the root if present (it's rendered separately as the header card).
     return events.filter((evt: MatrixEvent) => evt.getId() !== rootEventId);
   }, [thread, rootEventId]);
 
   return (
-    <Box
-      className={classNames(css.ThreadDrawer, ContainerColor({ variant: 'Surface' }))}
-      shrink="No"
-      direction="Column"
-    >
-      <ThreadDrawerHeader room={room} />
-      <Box className={css.ThreadDrawerContentBase} grow="Yes">
+    <Page ref={pageRef}>
+      <ThreadViewHeader room={room} onBack={handleBack} />
+      <Box className={css.ThreadViewContentBase} grow="Yes">
         <Scroll ref={scrollRef} variant="Surface" size="300" visibility="Hover" hideTrack>
-          <Box className={css.ThreadDrawerContent} direction="Column" gap="300">
+          <Box className={css.ThreadViewContent} direction="Column" gap="400">
             {rootEvent ? (
               <ThreadEventItem
                 room={room}
@@ -382,20 +409,28 @@ export function ThreadDrawer({ room, rootEventId }: ThreadDrawerProps) {
           </Box>
         </Scroll>
       </Box>
-      {canMessage && (
-        <Box ref={inputContainerRef} shrink="No" direction="Column">
-          <div style={{ padding: `0 ${config.space.S400}` }}>
+      <Box shrink="No" direction="Column">
+        <div style={{ padding: `0 ${config.space.S400}` }}>
+          {canMessage ? (
             <RoomInput
               ref={inputRef}
               editor={editor}
               roomId={room.roomId}
               room={room}
-              fileDropContainerRef={inputContainerRef}
+              fileDropContainerRef={pageRef}
               threadRootId={rootEventId}
             />
-          </div>
-        </Box>
-      )}
-    </Box>
+          ) : (
+            <RoomInputPlaceholder
+              style={{ padding: config.space.S200 }}
+              alignItems="Center"
+              justifyContent="Center"
+            >
+              <Text align="Center">You do not have permission to post in this thread</Text>
+            </RoomInputPlaceholder>
+          )}
+        </div>
+      </Box>
+    </Page>
   );
 }

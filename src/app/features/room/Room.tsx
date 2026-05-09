@@ -1,11 +1,11 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback } from 'react';
 import { Box, Line } from 'folds';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { isKeyHotkey } from 'is-hotkey';
-import { useAtom, useAtomValue } from 'jotai';
+import { useAtomValue } from 'jotai';
 import { RoomView } from './RoomView';
 import { MembersDrawer } from './MembersDrawer';
-import { ThreadDrawer } from './ThreadDrawer';
+import { ThreadView } from './ThreadView';
 import { ScreenSize, useScreenSizeContext } from '../../hooks/useScreenSize';
 import { useSetting } from '../../state/hooks/settings';
 import { settingsAtom } from '../../state/settings';
@@ -19,10 +19,13 @@ import { CallView } from '../call/CallView';
 import { RoomViewHeader } from './RoomViewHeader';
 import { callChatAtom } from '../../state/callEmbed';
 import { CallChatView } from './CallChatView';
-import { roomRightPanelAtomFamily } from '../../state/room/roomRightPanel';
+
+export const THREAD_SEARCH_PARAM = 'thread';
 
 export function Room() {
   const { eventId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const room = useRoom();
   const mx = useMatrixClient();
 
@@ -32,18 +35,23 @@ export function Room() {
   const powerLevels = usePowerLevels(room);
   const members = useRoomMembers(mx, room.roomId);
   const chat = useAtomValue(callChatAtom);
-  const [rightPanel, setRightPanel] = useAtom(roomRightPanelAtomFamily(room.roomId));
 
-  // Per-room slot state seeds from isPeopleDrawer on room change.
-  // atomFamily values persist across navigation. Seeds from isPeopleDrawer on
-  // roomId change, but preserves any pre-set thread phase (e.g. set by
-  // notification routing before this Room mounts) by only seeding when the
-  // atom is currently null.
-  useEffect(() => {
-    setRightPanel((current) => current ?? (isDrawer ? 'members' : null));
-    // Only run on roomId change; isDrawer is the seed, not a live dependency.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room.roomId]);
+  const threadRootId = searchParams.get(THREAD_SEARCH_PARAM) ?? undefined;
+
+  const handleThreadBack = useCallback(() => {
+    // Drop the thread search param. If history has a prior entry from this
+    // tab, prefer browser-back so back/forward stays consistent; otherwise
+    // strip the param from the URL in place.
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete(THREAD_SEARCH_PARAM);
+      return next;
+    });
+  }, [navigate, setSearchParams]);
 
   useKeyDown(
     window,
@@ -58,6 +66,7 @@ export function Room() {
   );
 
   const callView = room.isCallRoom();
+  const inThread = !callView && threadRootId !== undefined;
 
   return (
     <PowerLevelsContextProvider value={powerLevels}>
@@ -70,12 +79,22 @@ export function Room() {
             </Box>
           </Box>
         )}
-        {!callView && (
+        {!callView && !inThread && (
           <Box grow="Yes" direction="Column">
             <RoomViewHeader />
             <Box grow="Yes">
               <RoomView eventId={eventId} />
             </Box>
+          </Box>
+        )}
+        {inThread && threadRootId && (
+          <Box grow="Yes" direction="Column">
+            <ThreadView
+              key={`${room.roomId}:${threadRootId}`}
+              room={room}
+              rootEventId={threadRootId}
+              onBack={handleThreadBack}
+            />
           </Box>
         )}
 
@@ -87,26 +106,12 @@ export function Room() {
             <CallChatView />
           </>
         )}
-        {!callView && screenSize === ScreenSize.Desktop && rightPanel === 'members' && (
+        {!callView && !inThread && screenSize === ScreenSize.Desktop && isDrawer && (
           <>
             <Line variant="Background" direction="Vertical" size="300" />
             <MembersDrawer key={room.roomId} room={room} members={members} />
           </>
         )}
-        {!callView &&
-          screenSize === ScreenSize.Desktop &&
-          rightPanel !== null &&
-          typeof rightPanel === 'object' &&
-          rightPanel.phase === 'thread' && (
-            <>
-              <Line variant="Background" direction="Vertical" size="300" />
-              <ThreadDrawer
-                key={`${room.roomId}:${rightPanel.rootEventId}`}
-                room={room}
-                rootEventId={rightPanel.rootEventId}
-              />
-            </>
-          )}
       </Box>
     </PowerLevelsContextProvider>
   );

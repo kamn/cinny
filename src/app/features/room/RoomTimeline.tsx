@@ -48,6 +48,7 @@ import {
 import { isKeyHotkey } from 'is-hotkey';
 import { Opts as LinkifyOpts } from 'linkifyjs';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
 import { eventWithShortcode, factoryEventSentBy, getMxIdLocalPart } from '../../utils/matrix';
 import { useMatrixClient } from '../../hooks/useMatrixClient';
 import { useVirtualPaginator, ItemRange } from '../../hooks/useVirtualPaginator';
@@ -102,7 +103,7 @@ import * as css from './RoomTimeline.css';
 import { inSameDay, minuteDifference, timeDayMonthYear, today, yesterday } from '../../utils/time';
 import { createMentionElement, isEmptyEditor, moveCursor } from '../../components/editor';
 import { roomIdToReplyDraftAtomFamily } from '../../state/room/roomInputDrafts';
-import { roomRightPanelAtomFamily } from '../../state/room/roomRightPanel';
+import { THREAD_SEARCH_PARAM } from './Room';
 import { usePowerLevelsContext } from '../../hooks/usePowerLevels';
 import { GetContentCallback, MessageEvent, StateEvent } from '../../../types/matrix/room';
 import { useKeyDown } from '../../hooks/useKeyDown';
@@ -456,7 +457,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
   const ignoredUsersSet = useMemo(() => new Set(ignoredUsersList), [ignoredUsersList]);
 
   const setReplyDraft = useSetAtom(roomIdToReplyDraftAtomFamily(room.roomId));
-  const setRightPanel = useSetAtom(roomRightPanelAtomFamily(room.roomId));
+  const [, setSearchParams] = useSearchParams();
   const powerLevels = usePowerLevelsContext();
   const creators = useRoomCreators(room);
 
@@ -914,16 +915,20 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
     [handleOpenEvent]
   );
 
-  // Open the thread drawer for a given event. Per R15, if the target itself is a
-  // thread reply, walk to its threadRootId so we always open the drawer at the
-  // root, not at a mid-chain reply.
+  // Open the thread page for a given event. Per R15, if the target itself is a
+  // thread reply, walk to its threadRootId so we always land on the root, not
+  // a mid-chain reply.
   const openThread = useCallback(
     (eventId: string) => {
       const targetEvent = room.findEventById(eventId);
       const rootEventId = targetEvent?.threadRootId ?? eventId;
-      setRightPanel({ phase: 'thread', rootEventId });
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.set(THREAD_SEARCH_PARAM, rootEventId);
+        return next;
+      });
     },
-    [room, setRightPanel]
+    [room, setSearchParams]
   );
 
   const handleThreadIndicatorClick: MouseEventHandler<HTMLButtonElement> = useCallback(

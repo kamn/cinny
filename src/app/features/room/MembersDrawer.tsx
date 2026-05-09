@@ -42,10 +42,8 @@ import { useDebounce } from '../../hooks/useDebounce';
 import { TypingIndicator } from '../../components/typing-indicator';
 import { getMemberDisplayName, getMemberSearchStr } from '../../utils/room';
 import { getMxIdLocalPart } from '../../utils/matrix';
-import { useSetAtom } from 'jotai';
 import { useSetSetting, useSetting } from '../../state/hooks/settings';
 import { settingsAtom } from '../../state/settings';
-import { roomRightPanelAtomFamily } from '../../state/room/roomRightPanel';
 import { millify } from '../../plugins/millify';
 import { ScrollTopContainer } from '../../components/scroll-top-container';
 import { UserAvatar } from '../../components/user-avatar';
@@ -67,12 +65,6 @@ type MemberDrawerHeaderProps = {
 };
 function MemberDrawerHeader({ room }: MemberDrawerHeaderProps) {
   const setPeopleDrawer = useSetSetting(settingsAtom, 'isPeopleDrawer');
-  const setRightPanel = useSetAtom(roomRightPanelAtomFamily(room.roomId));
-
-  const handleClose = () => {
-    setPeopleDrawer(false);
-    setRightPanel(null);
-  };
 
   return (
     <Header className={css.MembersDrawerHeader} variant="Background" size="600">
@@ -94,7 +86,11 @@ function MemberDrawerHeader({ room }: MemberDrawerHeaderProps) {
             }
           >
             {(triggerRef) => (
-              <IconButton ref={triggerRef} variant="Background" onClick={handleClose}>
+              <IconButton
+                ref={triggerRef}
+                variant="Background"
+                onClick={() => setPeopleDrawer(false)}
+              >
                 <Icon src={Icons.Cross} />
               </IconButton>
             )}
