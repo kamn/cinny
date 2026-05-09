@@ -1,4 +1,4 @@
-import { globalStyle, style } from '@vanilla-extract/css';
+import { style } from '@vanilla-extract/css';
 import { color, config, toRem } from 'folds';
 
 export const ThreadSummary = style({
@@ -30,13 +30,14 @@ export const ThreadSummaryAvatars = style({
   alignItems: 'center',
 });
 
+// Each avatar slot overlaps the previous by ~6px so the row reads as a
+// participant cluster. The folds <Avatar size="200" radii="Pill"> child
+// owns the actual sizing/circle clip; this wrapper just handles the stack
+// offset and the surface-colored ring around each avatar.
 export const ThreadSummaryAvatar = style({
   display: 'inline-block',
-  width: toRem(20),
-  height: toRem(20),
   borderRadius: '50%',
   border: `${toRem(2)} solid ${color.Surface.Container}`,
-  overflow: 'hidden',
   flexShrink: 0,
   marginLeft: toRem(-6),
   selectors: {
@@ -44,17 +45,6 @@ export const ThreadSummaryAvatar = style({
       marginLeft: 0,
     },
   },
-});
-
-// Constrain folds AvatarImage / AvatarFallback descendants. Without this the
-// underlying <img> uses its intrinsic dimensions and stretches the avatar oval.
-globalStyle(`${ThreadSummaryAvatar} > *`, {
-  width: '100%',
-  height: '100%',
-  display: 'block',
-});
-globalStyle(`${ThreadSummaryAvatar} img`, {
-  objectFit: 'cover',
 });
 
 export const ThreadSummaryUnreadDot = style({

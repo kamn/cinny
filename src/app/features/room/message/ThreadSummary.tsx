@@ -1,4 +1,4 @@
-import { Box, Icon, Icons, Text } from 'folds';
+import { Avatar, Box, Icon, Icons, Text } from 'folds';
 import {
   MatrixEvent,
   NotificationCountType,
@@ -155,12 +155,14 @@ export function ThreadSummary({ room, mEvent, onOpen }: ThreadSummaryProps) {
                 title={displayName}
                 aria-hidden
               >
-                <UserAvatar
-                  userId={userId}
-                  src={src}
-                  alt={displayName}
-                  renderFallback={() => <Icon size="50" src={Icons.User} filled />}
-                />
+                <Avatar size="200" radii="Pill">
+                  <UserAvatar
+                    userId={userId}
+                    src={src}
+                    alt={displayName}
+                    renderFallback={() => <Icon size="50" src={Icons.User} filled />}
+                  />
+                </Avatar>
               </span>
             );
           })}
