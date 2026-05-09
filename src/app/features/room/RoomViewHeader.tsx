@@ -1,4 +1,5 @@
 import React, { MouseEventHandler, forwardRef, useState } from 'react';
+import { useSetAtom } from 'jotai';
 import FocusTrap from 'focus-trap-react';
 import {
   Box,
@@ -43,6 +44,7 @@ import { useRoomUnread } from '../../state/hooks/unread';
 import { usePowerLevelsContext } from '../../hooks/usePowerLevels';
 import { markAsRead } from '../../utils/notifications';
 import { roomToUnreadAtom } from '../../state/room/roomToUnread';
+import { roomRightPanelAtomFamily } from '../../state/room/roomRightPanel';
 import { copyToClipboard } from '../../utils/dom';
 import { LeaveRoomPrompt } from '../../components/leave-room-prompt';
 import { useRoomAvatar, useRoomName, useRoomTopic } from '../../hooks/useRoomMeta';
@@ -275,6 +277,7 @@ export function RoomViewHeader({ callView }: { callView?: boolean }) {
     : undefined;
 
   const [peopleDrawer, setPeopleDrawer] = useSetting(settingsAtom, 'isPeopleDrawer');
+  const setRightPanel = useSetAtom(roomRightPanelAtomFamily(room.roomId));
 
   const handleSearchClick = () => {
     const searchParams: _SearchPathSearchParams = {
@@ -301,7 +304,9 @@ export function RoomViewHeader({ callView }: { callView?: boolean }) {
       openSettings(room.roomId, parentSpace?.roomId, RoomSettingsPage.MembersPage);
       return;
     }
-    setPeopleDrawer(!peopleDrawer);
+    const next = !peopleDrawer;
+    setPeopleDrawer(next);
+    setRightPanel(next ? 'members' : null);
   };
 
   return (

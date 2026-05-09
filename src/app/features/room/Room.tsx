@@ -1,8 +1,8 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { Box, Line } from 'folds';
 import { useParams } from 'react-router-dom';
 import { isKeyHotkey } from 'is-hotkey';
-import { useAtomValue } from 'jotai';
+import { useAtom, useAtomValue } from 'jotai';
 import { RoomView } from './RoomView';
 import { MembersDrawer } from './MembersDrawer';
 import { ScreenSize, useScreenSizeContext } from '../../hooks/useScreenSize';
@@ -18,6 +18,7 @@ import { CallView } from '../call/CallView';
 import { RoomViewHeader } from './RoomViewHeader';
 import { callChatAtom } from '../../state/callEmbed';
 import { CallChatView } from './CallChatView';
+import { roomRightPanelAtomFamily } from '../../state/room/roomRightPanel';
 
 export function Room() {
   const { eventId } = useParams();
@@ -30,6 +31,15 @@ export function Room() {
   const powerLevels = usePowerLevels(room);
   const members = useRoomMembers(mx, room.roomId);
   const chat = useAtomValue(callChatAtom);
+  const [rightPanel, setRightPanel] = useAtom(roomRightPanelAtomFamily(room.roomId));
+
+  // Per-room slot state seeds from isPeopleDrawer on room change.
+  // atomFamily values persist across navigation, so explicit init is required.
+  useEffect(() => {
+    setRightPanel(isDrawer ? 'members' : null);
+    // Only run on roomId change; isDrawer is the seed, not a live dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room.roomId]);
 
   useKeyDown(
     window,
@@ -73,7 +83,7 @@ export function Room() {
             <CallChatView />
           </>
         )}
-        {!callView && screenSize === ScreenSize.Desktop && isDrawer && (
+        {!callView && screenSize === ScreenSize.Desktop && rightPanel === 'members' && (
           <>
             <Line variant="Background" direction="Vertical" size="300" />
             <MembersDrawer key={room.roomId} room={room} members={members} />
