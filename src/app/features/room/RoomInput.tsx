@@ -242,6 +242,7 @@ export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
     );
 
     useEffect(() => {
+      if (msgDraft.length === 0) return;
       Transforms.insertFragment(editor, msgDraft);
     }, [editor, msgDraft]);
 
