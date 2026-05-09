@@ -41,8 +41,16 @@ import {
   makeMentionCustomProps,
   renderMatrixMention,
 } from '../../plugins/react-custom-html-parser';
-import { getEditedEvent, getMemberAvatarMxc, getMemberDisplayName } from '../../utils/room';
+import {
+  getEditedEvent,
+  getEventReactions,
+  getMemberAvatarMxc,
+  getMemberDisplayName,
+} from '../../utils/room';
+import { eventWithShortcode, factoryEventSentBy } from '../../utils/matrix';
 import { getMxIdLocalPart, mxcUrlToHttp } from '../../utils/matrix';
+import { Reactions } from './message';
+import { type Relations } from 'matrix-js-sdk/lib/models/relations';
 import {
   AvatarBase,
   ImageContent,
@@ -75,6 +83,10 @@ type ThreadEventItemProps = {
   renderContent: ReturnType<
     typeof useMatrixEventRenderer<[MatrixEvent, string, GetContentCallback]>
   >;
+  reactionRelations?: Relations | null;
+  canSendReaction?: boolean;
+  onReactionToggle: (targetEventId: string, key: string, shortcode?: string) => void;
+  editTimelineSet: ReturnType<Room['getUnfilteredTimelineSet']>;
   hour24Clock: boolean;
   dateFormatString: string;
 };
@@ -83,6 +95,10 @@ function ThreadEventItem({
   room,
   mEvent,
   renderContent,
+  reactionRelations,
+  canSendReaction,
+  onReactionToggle,
+  editTimelineSet,
   hour24Clock,
   dateFormatString,
 }: ThreadEventItemProps) {
@@ -92,9 +108,15 @@ function ThreadEventItem({
   const displayName =
     getMemberDisplayName(room, senderId) ?? getMxIdLocalPart(senderId) ?? senderId;
   const senderAvatarMxc = getMemberAvatarMxc(room, senderId);
-  const editedEvent = getEditedEvent(mEvent.getId() ?? '', mEvent, room.getUnfilteredTimelineSet());
+  // Edits live in the thread's timelineSet (addRelatedThreadEvent in
+  // matrix-js-sdk/lib/models/thread.js puts m.replace there); look there
+  // first, fall back to the unfiltered set for the root.
+  const editedEvent = getEditedEvent(mEvent.getId() ?? '', mEvent, editTimelineSet);
   const getContent = (() =>
     editedEvent?.getContent()['m.new_content'] ?? mEvent.getContent()) as GetContentCallback;
+  const eventId = mEvent.getId();
+  const reactionsBySortedKey = reactionRelations?.getSortedAnnotationsByKey() ?? null;
+  const hasReactions = !!reactionsBySortedKey && reactionsBySortedKey.length > 0;
 
   return (
     <ModernLayout
@@ -125,6 +147,16 @@ function ThreadEventItem({
         <Time ts={mEvent.getTs()} hour24Clock={hour24Clock} dateFormatString={dateFormatString} />
       </Box>
       {renderContent(mEvent.getType() ?? '', false, mEvent, displayName, getContent)}
+      {hasReactions && eventId && reactionRelations && (
+        <Reactions
+          style={{ marginTop: config.space.S200 }}
+          room={room}
+          relations={reactionRelations}
+          mEventId={eventId}
+          canSendReaction={canSendReaction}
+          onReactionToggle={onReactionToggle}
+        />
+      )}
     </ModernLayout>
   );
 }
@@ -399,8 +431,17 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
   const rootEvent = thread?.rootEvent ?? room.findEventById(rootEventId);
   const replies: MatrixEvent[] = useMemo(() => {
     const liveEvents: MatrixEvent[] = thread?.liveTimeline.getEvents() ?? [];
-    const filteredLive = liveEvents.filter((evt) => evt.getId() !== rootEventId);
-    const liveIds = new Set(filteredLive.map((evt) => evt.getId()));
+    // Edits (m.replace) and reactions (m.annotation) are kept in the thread's
+    // timelineSet for aggregation purposes — they should not render as their
+    // own message bubbles. RenderMessageContent picks up edits via
+    // getEditedEvent and Reactions reads aggregated annotations directly.
+    const messageEvents = liveEvents.filter(
+      (evt) =>
+        evt.getId() !== rootEventId &&
+        !evt.isRelation(RelationType.Replace) &&
+        !evt.isRelation(RelationType.Annotation)
+    );
+    const liveIds = new Set(messageEvents.map((evt) => evt.getId()));
     // Merge in pending events that haven't yet been promoted to the live
     // timeline by remote echo. Dedupe by event id since handleRemoteEcho keeps
     // the same MatrixEvent reference and updates its id in place.
@@ -408,8 +449,41 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
       const id = evt.getId();
       return id ? !liveIds.has(id) : true;
     });
-    return [...filteredLive, ...stillPending].sort((a, b) => a.getTs() - b.getTs());
+    return [...messageEvents, ...stillPending].sort((a, b) => a.getTs() - b.getTs());
   }, [thread, pendingEvents, rootEventId]);
+
+  const canSendReaction = permissions.event(EventType.Reaction, mx.getSafeUserId());
+
+  const handleReactionToggle = useCallback(
+    (targetEventId: string, key: string, shortcode?: string) => {
+      const t = room.getThread(rootEventId);
+      const timelineSet = t?.timelineSet ?? room.getUnfilteredTimelineSet();
+      const relations = getEventReactions(timelineSet, targetEventId);
+      const allReactions = relations?.getSortedAnnotationsByKey() ?? [];
+      const [, reactionsSet] = allReactions.find(([k]) => k === key) ?? [];
+      const reactions = reactionsSet ? Array.from(reactionsSet) : [];
+      const myReaction = reactions.find(factoryEventSentBy(mx.getUserId()!));
+
+      if (myReaction && !!myReaction.isRelation()) {
+        mx.redactEvent(room.roomId, myReaction.getId()!);
+        return;
+      }
+      const rShortcode =
+        shortcode ||
+        (reactions.find(eventWithShortcode)?.getContent().shortcode as string | undefined);
+      mx.sendEvent(room.roomId, rootEventId, MessageEvent.Reaction as string, {
+        'm.relates_to': {
+          rel_type: RelationType.Annotation,
+          event_id: targetEventId,
+          key,
+        },
+        ...(rShortcode ? { shortcode: rShortcode } : {}),
+      });
+    },
+    [mx, room, rootEventId]
+  );
+
+  const editTimelineSet = thread?.timelineSet ?? room.getUnfilteredTimelineSet();
 
   return (
     <Page ref={pageRef}>
@@ -422,6 +496,14 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
                 room={room}
                 mEvent={rootEvent}
                 renderContent={renderContent}
+                reactionRelations={
+                  rootEvent.getId()
+                    ? getEventReactions(editTimelineSet, rootEvent.getId()!)
+                    : undefined
+                }
+                canSendReaction={canSendReaction}
+                onReactionToggle={handleReactionToggle}
+                editTimelineSet={editTimelineSet}
                 hour24Clock={hour24Clock}
                 dateFormatString={dateFormatString}
               />
@@ -439,16 +521,23 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
                 </Text>
               </Box>
             ) : (
-              replies.map((mEvent) => (
-                <ThreadEventItem
-                  key={mEvent.getId()}
-                  room={room}
-                  mEvent={mEvent}
-                  renderContent={renderContent}
-                  hour24Clock={hour24Clock}
-                  dateFormatString={dateFormatString}
-                />
-              ))
+              replies.map((mEvent) => {
+                const id = mEvent.getId();
+                return (
+                  <ThreadEventItem
+                    key={id}
+                    room={room}
+                    mEvent={mEvent}
+                    renderContent={renderContent}
+                    reactionRelations={id ? getEventReactions(editTimelineSet, id) : undefined}
+                    canSendReaction={canSendReaction}
+                    onReactionToggle={handleReactionToggle}
+                    editTimelineSet={editTimelineSet}
+                    hour24Clock={hour24Clock}
+                    dateFormatString={dateFormatString}
+                  />
+                );
+              })
             )}
           </Box>
         </Scroll>
