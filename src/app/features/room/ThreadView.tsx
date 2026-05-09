@@ -231,6 +231,7 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
   const [showUrlPreview] = useSetting(settingsAtom, 'urlPreview');
   const [hour24Clock] = useSetting(settingsAtom, 'hour24Clock');
   const [dateFormatString] = useSetting(settingsAtom, 'dateFormatString');
+  const [showHiddenEvents] = useSetting(settingsAtom, 'showHiddenEvents');
 
   const [thread, setThread] = useState<Thread | null>(() => room.getThread(rootEventId));
   const [tick, setTick] = useState(0);
@@ -484,15 +485,20 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
   );
   const replies: MatrixEvent[] = useMemo(() => {
     const liveEvents: MatrixEvent[] = thread?.liveTimeline.getEvents() ?? [];
-    // Edits (m.replace) and reactions (m.annotation) are kept in the thread's
-    // timelineSet for aggregation purposes — they should not render as their
-    // own message bubbles. RenderMessageContent picks up edits via
-    // getEditedEvent and Reactions reads aggregated annotations directly.
+    // Skip:
+    // - the root (rendered separately as the head card)
+    // - edits (m.replace) and reactions (m.annotation), which aggregate onto
+    //   their parent via getEditedEvent / Reactions and shouldn't render as
+    //   their own bubbles
+    // - redacted events when showHiddenEvents is off, matching RoomTimeline.tsx
+    //   so a redacted thread reply doesn't render as a "[Redacted]" placeholder
+    //   that the main timeline would have hidden
     const messageEvents = liveEvents.filter(
       (evt) =>
         evt.getId() !== rootEventId &&
         !evt.isRelation(RelationType.Replace) &&
-        !evt.isRelation(RelationType.Annotation)
+        !evt.isRelation(RelationType.Annotation) &&
+        (showHiddenEvents || !evt.isRedacted())
     );
     const liveIds = new Set(messageEvents.map((evt) => evt.getId()));
     // Merge in pending events that haven't yet been promoted to the live
@@ -506,7 +512,7 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
     // tick re-evaluates the live timeline after thread mutations (matrix-js-sdk
     // reuses the same Thread instance, so thread reference equality is stable).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thread, pendingEvents, rootEventId, tick]);
+  }, [thread, pendingEvents, rootEventId, tick, showHiddenEvents]);
 
   const canSendReaction = permissions.event(EventType.Reaction, mx.getSafeUserId());
 
