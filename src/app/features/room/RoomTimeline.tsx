@@ -977,7 +977,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
   );
 
   const handleReplyClick: MouseEventHandler<HTMLButtonElement> = useCallback(
-    (evt, startThread = false) => {
+    (evt) => {
       const replyId = evt.currentTarget.getAttribute('data-event-id');
       if (!replyId) {
         console.warn('Button should have "data-event-id" attribute!');
@@ -988,9 +988,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
       const editedReply = getEditedEvent(replyId, replyEvt, room.getUnfilteredTimelineSet());
       const content: IContent = editedReply?.getContent()['m.new_content'] ?? replyEvt.getContent();
       const { body, formatted_body: formattedBody } = content;
-      const { 'm.relates_to': relation } = startThread
-        ? { 'm.relates_to': { rel_type: 'm.thread', event_id: replyId } }
-        : replyEvt.getWireContent();
+      const { 'm.relates_to': relation } = replyEvt.getWireContent();
       const senderId = replyEvt.getSender();
       if (senderId && typeof body === 'string') {
         setReplyDraft({
@@ -1081,6 +1079,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
             onUserClick={handleUserClick}
             onUsernameClick={handleUsernameClick}
             onReplyClick={handleReplyClick}
+            onOpenThread={openThread}
             onReactionToggle={handleReactionToggle}
             onEditId={handleEdit}
             reply={
@@ -1165,6 +1164,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
             onUserClick={handleUserClick}
             onUsernameClick={handleUsernameClick}
             onReplyClick={handleReplyClick}
+            onOpenThread={openThread}
             onReactionToggle={handleReactionToggle}
             onEditId={handleEdit}
             reply={
@@ -1285,6 +1285,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
             onUserClick={handleUserClick}
             onUsernameClick={handleUsernameClick}
             onReplyClick={handleReplyClick}
+            onOpenThread={openThread}
             onReactionToggle={handleReactionToggle}
             reactions={
               reactionRelations && (

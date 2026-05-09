@@ -667,10 +667,8 @@ export type MessageProps = {
   messageSpacing: MessageSpacing;
   onUserClick: MouseEventHandler<HTMLButtonElement>;
   onUsernameClick: MouseEventHandler<HTMLButtonElement>;
-  onReplyClick: (
-    ev: Parameters<MouseEventHandler<HTMLButtonElement>>[0],
-    startThread?: boolean
-  ) => void;
+  onReplyClick: MouseEventHandler<HTMLButtonElement>;
+  onOpenThread: (rootEventId: string) => void;
   onEditId?: (eventId?: string) => void;
   onReactionToggle: (targetEventId: string, key: string, shortcode?: string) => void;
   reply?: ReactNode;
@@ -703,6 +701,7 @@ export const Message = as<'div', MessageProps>(
       onUserClick,
       onUsernameClick,
       onReplyClick,
+      onOpenThread,
       onReactionToggle,
       onEditId,
       reply,
@@ -875,7 +874,13 @@ export const Message = as<'div', MessageProps>(
       }, 100);
     };
 
-    const isThreadedMessage = mEvent.threadRootId !== undefined;
+    // For thread replies, the drawer opens at the thread root, not at the reply
+    // itself (R15). For non-threaded messages, the event itself becomes the new
+    // root when the user starts a thread.
+    const handleOpenThreadClick = () => {
+      const rootId = mEvent.threadRootId ?? mEvent.getId();
+      if (rootId) onOpenThread(rootId);
+    };
 
     return (
       <MessageBase
@@ -941,17 +946,15 @@ export const Message = as<'div', MessageProps>(
                 >
                   <Icon src={Icons.ReplyArrow} size="100" />
                 </IconButton>
-                {!isThreadedMessage && (
-                  <IconButton
-                    onClick={(ev) => onReplyClick(ev, true)}
-                    data-event-id={mEvent.getId()}
-                    variant="SurfaceVariant"
-                    size="300"
-                    radii="300"
-                  >
-                    <Icon src={Icons.ThreadPlus} size="100" />
-                  </IconButton>
-                )}
+                <IconButton
+                  onClick={handleOpenThreadClick}
+                  data-event-id={mEvent.getId()}
+                  variant="SurfaceVariant"
+                  size="300"
+                  radii="300"
+                >
+                  <Icon src={Icons.ThreadPlus} size="100" />
+                </IconButton>
                 {canEditEvent(mx, mEvent) && onEditId && (
                   <IconButton
                     onClick={() => onEditId(mEvent.getId())}
@@ -1031,27 +1034,25 @@ export const Message = as<'div', MessageProps>(
                               Reply
                             </Text>
                           </MenuItem>
-                          {!isThreadedMessage && (
-                            <MenuItem
-                              size="300"
-                              after={<Icon src={Icons.ThreadPlus} size="100" />}
-                              radii="300"
-                              data-event-id={mEvent.getId()}
-                              onClick={(evt: any) => {
-                                onReplyClick(evt, true);
-                                closeMenu();
-                              }}
+                          <MenuItem
+                            size="300"
+                            after={<Icon src={Icons.ThreadPlus} size="100" />}
+                            radii="300"
+                            data-event-id={mEvent.getId()}
+                            onClick={() => {
+                              handleOpenThreadClick();
+                              closeMenu();
+                            }}
+                          >
+                            <Text
+                              className={css.MessageMenuItemText}
+                              as="span"
+                              size="T300"
+                              truncate
                             >
-                              <Text
-                                className={css.MessageMenuItemText}
-                                as="span"
-                                size="T300"
-                                truncate
-                              >
-                                Reply in Thread
-                              </Text>
-                            </MenuItem>
-                          )}
+                              Reply in Thread
+                            </Text>
+                          </MenuItem>
                           {canEditEvent(mx, mEvent) && onEditId && (
                             <MenuItem
                               size="300"
