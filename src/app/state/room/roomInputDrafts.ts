@@ -20,11 +20,16 @@ export type TUploadItem = {
 
 export type TUploadListAtom = ReturnType<typeof createListAtom<TUploadItem>>;
 
-export const roomIdToUploadItemsAtomFamily = atomFamily<string, TUploadListAtom>(
-  createListAtom
-);
+export const roomIdToUploadItemsAtomFamily = atomFamily<string, TUploadListAtom>(createListAtom);
 
 export const roomUploadAtomFamily = createUploadAtomFamily();
+
+// Thread composer state. Keyed by `${roomId}:${threadRootId}` so a thread's
+// drafts/uploads are isolated from the parent room's composer (R11 — Slate
+// Descendant[] holds plaintext, so the families MUST be separate atoms).
+export const threadUploadItemsAtomFamily = atomFamily<string, TUploadListAtom>(createListAtom);
+
+export const threadUploadAtomFamily = createUploadAtomFamily();
 
 export type RoomIdToMsgAction =
   | {
@@ -42,6 +47,9 @@ export type TMsgDraftAtom = ReturnType<typeof createMsgDraftAtom>;
 export const roomIdToMsgDraftAtomFamily = atomFamily<string, TMsgDraftAtom>(() =>
   createMsgDraftAtom()
 );
+export const threadMsgDraftAtomFamily = atomFamily<string, TMsgDraftAtom>(() =>
+  createMsgDraftAtom()
+);
 
 export type IReplyDraft = {
   userId: string;
@@ -53,5 +61,8 @@ export type IReplyDraft = {
 const createReplyDraftAtom = () => atom<IReplyDraft | undefined>(undefined);
 export type TReplyDraftAtom = ReturnType<typeof createReplyDraftAtom>;
 export const roomIdToReplyDraftAtomFamily = atomFamily<string, TReplyDraftAtom>(() =>
+  createReplyDraftAtom()
+);
+export const threadReplyDraftAtomFamily = atomFamily<string, TReplyDraftAtom>(() =>
   createReplyDraftAtom()
 );

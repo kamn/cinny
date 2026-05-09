@@ -74,6 +74,8 @@ import {
   roomIdToReplyDraftAtomFamily,
   roomIdToUploadItemsAtomFamily,
   roomUploadAtomFamily,
+  threadMsgDraftAtomFamily,
+  threadReplyDraftAtomFamily,
 } from '../../state/room/roomInputDrafts';
 import { UploadCardRenderer } from '../../components/upload-card';
 import {
@@ -123,9 +125,16 @@ interface RoomInputProps {
   fileDropContainerRef: RefObject<HTMLElement>;
   roomId: string;
   room: Room;
+  /**
+   * When set, the composer is operating inside a thread drawer. Slate body
+   * drafts and reply drafts are isolated to per-thread atom families so typing
+   * in the drawer does not bleed into the room composer (R11 — Slate
+   * Descendant[] holds plaintext).
+   */
+  threadRootId?: string;
 }
 export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
-  ({ editor, fileDropContainerRef, roomId, room }, ref) => {
+  ({ editor, fileDropContainerRef, roomId, room, threadRootId }, ref) => {
     const mx = useMatrixClient();
     const useAuthentication = useMediaAuthentication();
     const [enterForNewline] = useSetting(settingsAtom, 'enterForNewline');
@@ -139,8 +148,15 @@ export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
     const powerLevels = usePowerLevelsContext();
     const creators = useRoomCreators(room);
 
-    const [msgDraft, setMsgDraft] = useAtom(roomIdToMsgDraftAtomFamily(roomId));
-    const [replyDraft, setReplyDraft] = useAtom(roomIdToReplyDraftAtomFamily(roomId));
+    const draftKey = threadRootId ? `${roomId}:${threadRootId}` : roomId;
+    const msgDraftAtom = threadRootId
+      ? threadMsgDraftAtomFamily(draftKey)
+      : roomIdToMsgDraftAtomFamily(roomId);
+    const replyDraftAtom = threadRootId
+      ? threadReplyDraftAtomFamily(draftKey)
+      : roomIdToReplyDraftAtomFamily(roomId);
+    const [msgDraft, setMsgDraft] = useAtom(msgDraftAtom);
+    const [replyDraft, setReplyDraft] = useAtom(replyDraftAtom);
     const replyUserID = replyDraft?.userId;
 
     const powerLevelTags = usePowerLevelTags(room, powerLevels);
@@ -372,16 +388,36 @@ export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
           content['m.relates_to'].is_falling_back = false;
         }
       }
-      const threadId =
-        replyDraft?.relation?.rel_type === RelationType.Thread
-          ? replyDraft.relation.event_id
+      // Inside a thread drawer the composer always sends to that thread, even
+      // when no replyDraft is set (sending the first reply). Otherwise fall back
+      // to the replyDraft's m.thread relation, if any.
+      const replyThreadId =
+        replyDraft && replyDraft.relation?.rel_type === RelationType.Thread
+          ? replyDraft.relation.event_id ?? null
           : null;
+      const threadId: string | null = threadRootId ?? replyThreadId;
+      if (threadRootId && !content['m.relates_to']) {
+        // No replyDraft means the user is starting a fresh reply in the thread.
+        // The SDK's addThreadRelationIfNeeded will decorate content with the
+        // m.thread relation (and an is_falling_back reply fallback) when given
+        // a threadId, so we don't need to set m.relates_to manually here.
+      }
       mx.sendMessage(roomId, threadId, content as any);
       resetEditor(editor);
       resetEditorHistory(editor);
       setReplyDraft(undefined);
       sendTypingStatus(false);
-    }, [mx, roomId, editor, replyDraft, sendTypingStatus, setReplyDraft, isMarkdown, commands]);
+    }, [
+      mx,
+      roomId,
+      editor,
+      replyDraft,
+      sendTypingStatus,
+      setReplyDraft,
+      isMarkdown,
+      commands,
+      threadRootId,
+    ]);
 
     const handleKeyDown: KeyboardEventHandler = useCallback(
       (evt) => {

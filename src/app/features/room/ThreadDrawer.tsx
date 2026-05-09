@@ -20,6 +20,7 @@ import classNames from 'classnames';
 
 import * as css from './ThreadDrawer.css';
 import { ContainerColor } from '../../styles/ContainerColor.css';
+import { useEditor } from '../../components/editor';
 import { useMatrixClient } from '../../hooks/useMatrixClient';
 import { useMediaAuthentication } from '../../hooks/useMediaAuthentication';
 import { useMentionClickHandler } from '../../hooks/useMentionClickHandler';
@@ -56,6 +57,11 @@ import { UserAvatar } from '../../components/user-avatar';
 import { GetContentCallback, MessageEvent } from '../../../types/matrix/room';
 import * as customHtmlCss from '../../styles/CustomHtml.css';
 import { roomRightPanelAtomFamily } from '../../state/room/roomRightPanel';
+import { RoomInput } from './RoomInput';
+import { useRoomPermissions } from '../../hooks/useRoomPermissions';
+import { usePowerLevelsContext } from '../../hooks/usePowerLevels';
+import { useRoomCreators } from '../../hooks/useRoomCreators';
+import { EventType } from 'matrix-js-sdk';
 
 type ThreadEventItemProps = {
   room: Room;
@@ -165,6 +171,13 @@ export function ThreadDrawer({ room, rootEventId }: ThreadDrawerProps) {
   const mx = useMatrixClient();
   const useAuthentication = useMediaAuthentication();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputContainerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLDivElement>(null);
+  const editor = useEditor();
+  const powerLevels = usePowerLevelsContext();
+  const creators = useRoomCreators(room);
+  const permissions = useRoomPermissions(creators, powerLevels);
+  const canMessage = permissions.event(EventType.RoomMessage, mx.getSafeUserId());
 
   const [mediaAutoLoad] = useSetting(settingsAtom, 'mediaAutoLoad');
   const [showUrlPreview] = useSetting(settingsAtom, 'urlPreview');
@@ -369,6 +382,18 @@ export function ThreadDrawer({ room, rootEventId }: ThreadDrawerProps) {
           </Box>
         </Scroll>
       </Box>
+      {canMessage && (
+        <Box ref={inputContainerRef} shrink="No" direction="Column">
+          <RoomInput
+            ref={inputRef}
+            editor={editor}
+            roomId={room.roomId}
+            room={room}
+            fileDropContainerRef={inputContainerRef}
+            threadRootId={rootEventId}
+          />
+        </Box>
+      )}
     </Box>
   );
 }
