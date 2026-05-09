@@ -372,7 +372,11 @@ export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
           content['m.relates_to'].is_falling_back = false;
         }
       }
-      mx.sendMessage(roomId, content as any);
+      const threadId =
+        replyDraft?.relation?.rel_type === RelationType.Thread
+          ? replyDraft.relation.event_id
+          : null;
+      mx.sendMessage(roomId, threadId, content as any);
       resetEditor(editor);
       resetEditorHistory(editor);
       setReplyDraft(undefined);
