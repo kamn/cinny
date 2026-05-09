@@ -131,7 +131,7 @@ function ThreadDrawerHeader({ room }: ThreadDrawerHeaderProps) {
   const setRightPanel = useSetAtom(roomRightPanelAtomFamily(room.roomId));
 
   return (
-    <Header className={css.ThreadDrawerHeader} variant="Background" size="600">
+    <Header className={css.ThreadDrawerHeader} variant="Surface" size="600">
       <Box grow="Yes" alignItems="Center" gap="200">
         <Box grow="Yes" alignItems="Center" gap="200">
           <Icon size="200" src={Icons.Thread} />
@@ -151,7 +151,7 @@ function ThreadDrawerHeader({ room }: ThreadDrawerHeaderProps) {
             }
           >
             {(triggerRef) => (
-              <IconButton ref={triggerRef} variant="Background" onClick={() => setRightPanel(null)}>
+              <IconButton ref={triggerRef} variant="Surface" onClick={() => setRightPanel(null)}>
                 <Icon src={Icons.Cross} />
               </IconButton>
             )}
@@ -338,13 +338,13 @@ export function ThreadDrawer({ room, rootEventId }: ThreadDrawerProps) {
 
   return (
     <Box
-      className={classNames(css.ThreadDrawer, ContainerColor({ variant: 'Background' }))}
+      className={classNames(css.ThreadDrawer, ContainerColor({ variant: 'Surface' }))}
       shrink="No"
       direction="Column"
     >
       <ThreadDrawerHeader room={room} />
       <Box className={css.ThreadDrawerContentBase} grow="Yes">
-        <Scroll ref={scrollRef} variant="Background" size="300" visibility="Hover" hideTrack>
+        <Scroll ref={scrollRef} variant="Surface" size="300" visibility="Hover" hideTrack>
           <Box className={css.ThreadDrawerContent} direction="Column" gap="300">
             {rootEvent ? (
               <ThreadEventItem
@@ -384,14 +384,16 @@ export function ThreadDrawer({ room, rootEventId }: ThreadDrawerProps) {
       </Box>
       {canMessage && (
         <Box ref={inputContainerRef} shrink="No" direction="Column">
-          <RoomInput
-            ref={inputRef}
-            editor={editor}
-            roomId={room.roomId}
-            room={room}
-            fileDropContainerRef={inputContainerRef}
-            threadRootId={rootEventId}
-          />
+          <div style={{ padding: `0 ${config.space.S400}` }}>
+            <RoomInput
+              ref={inputRef}
+              editor={editor}
+              roomId={room.roomId}
+              room={room}
+              fileDropContainerRef={inputContainerRef}
+              threadRootId={rootEventId}
+            />
+          </div>
         </Box>
       )}
     </Box>
