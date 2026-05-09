@@ -5,3 +5,10 @@ devAssets
 
 .DS_Store
 .idea
+
+# Personal-fork planning notes — kept locally, not tracked in the repo.
+docs/brainstorms/
+docs/plans/
+
+# compound-engineering review run artifacts (local-only).
+.context/
