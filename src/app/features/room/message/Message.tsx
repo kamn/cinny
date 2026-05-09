@@ -675,6 +675,7 @@ export type MessageProps = {
   onReactionToggle: (targetEventId: string, key: string, shortcode?: string) => void;
   reply?: ReactNode;
   reactions?: ReactNode;
+  threadSummary?: ReactNode;
   hideReadReceipts?: boolean;
   showDeveloperTools?: boolean;
   memberPowerTag?: MemberPowerTag;
@@ -706,6 +707,7 @@ export const Message = as<'div', MessageProps>(
       onEditId,
       reply,
       reactions,
+      threadSummary,
       hideReadReceipts,
       showDeveloperTools,
       memberPowerTag,
@@ -831,6 +833,7 @@ export const Message = as<'div', MessageProps>(
         ) : (
           children
         )}
+        {threadSummary}
         {reactions}
       </Box>
     );

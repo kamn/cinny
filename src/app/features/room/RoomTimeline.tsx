@@ -87,7 +87,7 @@ import {
 import { useSetting } from '../../state/hooks/settings';
 import { MessageLayout, settingsAtom } from '../../state/settings';
 import { useMatrixEventRenderer } from '../../hooks/useMatrixEventRenderer';
-import { Reactions, Message, Event, EncryptedContent } from './message';
+import { Reactions, Message, Event, EncryptedContent, ThreadSummary } from './message';
 import { useMemberEventParser } from '../../hooks/useMemberEventParser';
 import * as customHtmlCss from '../../styles/CustomHtml.css';
 import { RoomIntro } from '../../components/room-intro';
@@ -1085,6 +1085,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
                 />
               )
             }
+            threadSummary={<ThreadSummary room={room} mEvent={mEvent} />}
             hideReadReceipts={hideActivity}
             showDeveloperTools={showDeveloperTools}
             memberPowerTag={getMemberPowerTag(senderId)}
@@ -1167,6 +1168,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
                 />
               )
             }
+            threadSummary={<ThreadSummary room={room} mEvent={mEvent} />}
             hideReadReceipts={hideActivity}
             showDeveloperTools={showDeveloperTools}
             memberPowerTag={getMemberPowerTag(mEvent.getSender() ?? '')}
