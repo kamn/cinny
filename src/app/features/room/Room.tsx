@@ -35,9 +35,12 @@ export function Room() {
   const [rightPanel, setRightPanel] = useAtom(roomRightPanelAtomFamily(room.roomId));
 
   // Per-room slot state seeds from isPeopleDrawer on room change.
-  // atomFamily values persist across navigation, so explicit init is required.
+  // atomFamily values persist across navigation. Seeds from isPeopleDrawer on
+  // roomId change, but preserves any pre-set thread phase (e.g. set by
+  // notification routing before this Room mounts) by only seeding when the
+  // atom is currently null.
   useEffect(() => {
-    setRightPanel(isDrawer ? 'members' : null);
+    setRightPanel((current) => current ?? (isDrawer ? 'members' : null));
     // Only run on roomId change; isDrawer is the seed, not a live dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room.roomId]);
