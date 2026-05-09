@@ -2,6 +2,7 @@ import { Avatar, Box, Icon, Icons, Text } from 'folds';
 import {
   MatrixEvent,
   NotificationCountType,
+  RelationType,
   RoomEvent,
   Room,
   Thread,
@@ -25,18 +26,27 @@ type ThreadSummaryProps = {
 const MAX_AVATARS = 4;
 
 // Walk thread events and gather unique senders, ordered by most recent
-// participation first. The thread root itself counts.
+// participation first. The thread root itself counts. Edits and reactions are
+// skipped — they aggregate state, not participation.
 function collectParticipants(thread: Thread): string[] {
   const events = thread.liveTimeline.getEvents();
   const seen = new Set<string>();
   const ordered: string[] = [];
   // Walk newest -> oldest so the most recently active participants come first.
   for (let i = events.length - 1; i >= 0; i -= 1) {
-    const sender = events[i]?.getSender();
+    const ev = events[i];
+    if (!ev) continue;
+    if (ev.isRelation(RelationType.Annotation) || ev.isRelation(RelationType.Replace)) continue;
+    const sender = ev.getSender();
     if (sender && !seen.has(sender)) {
       seen.add(sender);
       ordered.push(sender);
     }
+    // Early exit: we only render MAX_AVATARS plus a "+N" indicator, so
+    // there is no need to walk the full timeline of long threads. We pass
+    // MAX_AVATARS + 1 so the overflow count is correct as soon as we have
+    // at least one extra participant.
+    if (ordered.length >= MAX_AVATARS + 1) break;
   }
   // Always include the root sender if not already (e.g. thread.length === 0).
   const rootSender = thread.rootEvent?.getSender();
@@ -54,7 +64,7 @@ export function ThreadSummary({ room, mEvent, onOpen }: ThreadSummaryProps) {
   const [thread, setThread] = useState<Thread | null>(() =>
     eventId ? room.getThread(eventId) : null
   );
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
   const [unreadTotal, setUnreadTotal] = useState(() =>
     eventId ? room.getThreadUnreadNotificationCount(eventId, NotificationCountType.Total) : 0
   );
@@ -65,45 +75,41 @@ export function ThreadSummary({ room, mEvent, onOpen }: ThreadSummaryProps) {
   useEffect(() => {
     if (!eventId) return undefined;
 
-    const sync = () => {
+    const handler = () => {
       setThread(room.getThread(eventId));
       setTick((n) => n + 1);
-    };
-    sync();
-
-    room.on(ThreadEvent.New, sync);
-    room.on(ThreadEvent.Update, sync);
-
-    return () => {
-      room.off(ThreadEvent.New, sync);
-      room.off(ThreadEvent.Update, sync);
-    };
-  }, [room, eventId]);
-
-  useEffect(() => {
-    if (!eventId) return undefined;
-    const refresh = () => {
       setUnreadTotal(room.getThreadUnreadNotificationCount(eventId, NotificationCountType.Total));
       setUnreadHighlight(
         room.getThreadUnreadNotificationCount(eventId, NotificationCountType.Highlight)
       );
     };
-    // Re-read counts whenever the SDK signals notification or receipt changes,
-    // including thread-scoped variants. RoomEvent.UnreadNotifications is the
-    // primary signal; RoomEvent.Receipt covers the case where reading on a
-    // device clears the count.
-    room.on(RoomEvent.UnreadNotifications, refresh);
-    room.on(RoomEvent.Receipt, refresh);
-    room.on(ThreadEvent.Update, refresh);
-    refresh();
+    handler();
+
+    // Subscribe once each: ThreadEvent.New / Update keep our Thread reference
+    // and avatar list fresh; RoomEvent.UnreadNotifications and
+    // RoomEvent.Receipt cover thread-scoped unread bookkeeping (including
+    // clearing on read receipts from this device).
+    room.on(ThreadEvent.New, handler);
+    room.on(ThreadEvent.Update, handler);
+    room.on(RoomEvent.UnreadNotifications, handler);
+    room.on(RoomEvent.Receipt, handler);
+
     return () => {
-      room.off(RoomEvent.UnreadNotifications, refresh);
-      room.off(RoomEvent.Receipt, refresh);
-      room.off(ThreadEvent.Update, refresh);
+      room.off(ThreadEvent.New, handler);
+      room.off(ThreadEvent.Update, handler);
+      room.off(RoomEvent.UnreadNotifications, handler);
+      room.off(RoomEvent.Receipt, handler);
     };
   }, [room, eventId]);
 
-  const participants = useMemo(() => (thread ? collectParticipants(thread) : []), [thread]);
+  const participants = useMemo(
+    () => (thread ? collectParticipants(thread) : []),
+    // tick re-runs participant collection when the thread's live timeline
+    // mutates without changing the Thread reference (matrix-js-sdk reuses
+    // the same instance across thread updates).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [thread, tick]
+  );
 
   if (!thread || thread.length === 0) return null;
 
@@ -116,24 +122,14 @@ export function ThreadSummary({ room, mEvent, onOpen }: ThreadSummaryProps) {
   const hasUnread = unreadTotal > 0 || unreadHighlight > 0;
 
   return (
-    <button
+    <Box
+      as="button"
       type="button"
       className={css.ThreadSummary}
       onClick={handleClick}
       aria-label={`Open thread, ${thread.length} ${thread.length === 1 ? 'reply' : 'replies'}${
         hasUnread ? ', new activity' : ''
       }`}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '0.5rem',
-        background: 'none',
-        border: 'none',
-        textAlign: 'left',
-        font: 'inherit',
-        color: 'inherit',
-        width: '100%',
-      }}
     >
       <Icon className={css.ThreadSummaryIcon} size="100" src={Icons.Thread} />
       <Text as="span" size="T200" className={css.ThreadSummaryCount}>
@@ -167,7 +163,7 @@ export function ThreadSummary({ room, mEvent, onOpen }: ThreadSummaryProps) {
             );
           })}
           {overflow > 0 && (
-            <Text as="span" size="T200" priority="300" style={{ marginLeft: '0.25rem' }}>
+            <Text as="span" size="T200" priority="300" className={css.ThreadSummaryOverflow}>
               +{overflow}
             </Text>
           )}
@@ -182,6 +178,6 @@ export function ThreadSummary({ room, mEvent, onOpen }: ThreadSummaryProps) {
           aria-hidden
         />
       )}
-    </button>
+    </Box>
   );
 }

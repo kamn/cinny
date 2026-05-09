@@ -1114,7 +1114,11 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
                 />
               )
             }
-            threadSummary={<ThreadSummary room={room} mEvent={mEvent} onOpen={openThread} />}
+            threadSummary={
+              mEvent.getId() && room.getThread(mEvent.getId()!) ? (
+                <ThreadSummary room={room} mEvent={mEvent} onOpen={openThread} />
+              ) : undefined
+            }
             hideReadReceipts={hideActivity}
             showDeveloperTools={showDeveloperTools}
             memberPowerTag={getMemberPowerTag(senderId)}
@@ -1199,7 +1203,11 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
                 />
               )
             }
-            threadSummary={<ThreadSummary room={room} mEvent={mEvent} onOpen={openThread} />}
+            threadSummary={
+              mEvent.getId() && room.getThread(mEvent.getId()!) ? (
+                <ThreadSummary room={room} mEvent={mEvent} onOpen={openThread} />
+              ) : undefined
+            }
             hideReadReceipts={hideActivity}
             showDeveloperTools={showDeveloperTools}
             memberPowerTag={getMemberPowerTag(mEvent.getSender() ?? '')}

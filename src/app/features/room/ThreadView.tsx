@@ -20,11 +20,13 @@ import {
   MatrixEvent,
   MatrixEventEvent,
   RelationType,
+  Relations,
   Room,
   RoomEvent,
   Thread,
   ThreadEvent,
 } from 'matrix-js-sdk';
+import to from 'await-to-js';
 import * as css from './ThreadView.css';
 import { useEditor } from '../../components/editor';
 import { useMatrixClient } from '../../hooks/useMatrixClient';
@@ -47,10 +49,13 @@ import {
   getMemberAvatarMxc,
   getMemberDisplayName,
 } from '../../utils/room';
-import { eventWithShortcode, factoryEventSentBy } from '../../utils/matrix';
-import { getMxIdLocalPart, mxcUrlToHttp } from '../../utils/matrix';
-import { Reactions } from './message';
-import { type Relations } from 'matrix-js-sdk/lib/models/relations';
+import {
+  eventWithShortcode,
+  factoryEventSentBy,
+  getMxIdLocalPart,
+  mxcUrlToHttp,
+} from '../../utils/matrix';
+import { EncryptedContent, Reactions } from './message';
 import {
   AvatarBase,
   ImageContent,
@@ -63,7 +68,6 @@ import {
   Username,
   UsernameBold,
 } from '../../components/message';
-import { EncryptedContent } from './message';
 import { RenderMessageContent } from '../../components/RenderMessageContent';
 import { Image } from '../../components/media';
 import { ImageViewer } from '../../components/image-viewer';
@@ -217,7 +221,6 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
   const useAuthentication = useMediaAuthentication();
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLDivElement>(null);
   const editor = useEditor();
   const powerLevels = usePowerLevelsContext();
   const creators = useRoomCreators(room);
@@ -230,7 +233,9 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
   const [dateFormatString] = useSetting(settingsAtom, 'dateFormatString');
 
   const [thread, setThread] = useState<Thread | null>(() => room.getThread(rootEventId));
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
+  const [rootFetchError, setRootFetchError] = useState<string | null>(null);
+  const [rootFetchAttempted, setRootFetchAttempted] = useState(false);
   // Pending thread replies — local echoes the SDK doesn't insert into
   // thread.liveTimeline. With pendingEventOrdering=Chronological (the cinny
   // default), Room.addPendingEvent tries to add into the unfiltered timeline
@@ -242,7 +247,22 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
   const [pendingEvents, setPendingEvents] = useState<MatrixEvent[]>([]);
 
   useEffect(() => {
-    const sync = () => {
+    const sync = (event?: unknown) => {
+      // RoomEvent.Timeline / MatrixEventEvent.Decrypted pass a MatrixEvent as
+      // their first arg. ThreadEvent.New / ThreadEvent.Update pass a Thread,
+      // which has no getId(). Only filter when we have a MatrixEvent in hand.
+      if (
+        event &&
+        typeof (event as MatrixEvent).getId === 'function' &&
+        typeof (event as MatrixEvent).threadRootId !== 'undefined'
+      ) {
+        const ev = event as MatrixEvent;
+        const eventThreadRoot = ev.threadRootId;
+        const eventId = ev.getId();
+        if (eventThreadRoot !== rootEventId && eventId !== rootEventId) {
+          return;
+        }
+      }
       setThread(room.getThread(rootEventId));
       setTick((n) => n + 1);
     };
@@ -262,6 +282,30 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
     };
   }, [room, rootEventId]);
 
+  // Fix 6: when the URL points at a thread root that hasn't been loaded
+  // (deep-link, cold cache), proactively fetch the root. Without this, the
+  // page sticks on "Loading thread root…" forever because nothing else will
+  // populate room.findEventById for that id.
+  useEffect(() => {
+    setRootFetchError(null);
+    setRootFetchAttempted(false);
+    let cancelled = false;
+    const existing = room.getThread(rootEventId) || room.findEventById(rootEventId);
+    if (existing) return undefined;
+
+    (async () => {
+      const [err] = await to(mx.fetchRoomEvent(room.roomId, rootEventId));
+      if (cancelled) return;
+      setRootFetchAttempted(true);
+      if (err) {
+        setRootFetchError('Thread not found in this room.');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mx, room, rootEventId]);
+
   useEffect(() => {
     const handler = (event: MatrixEvent) => {
       if (event.threadRootId !== rootEventId) return;
@@ -277,7 +321,10 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
 
       const txnId = event.getTxnId();
       setPendingEvents((prev) => {
-        const filtered = prev.filter((p) => p.getTxnId() !== txnId || !txnId);
+        const filtered = prev.filter((p) => {
+          if (!txnId) return true; // can't dedup without a txnId
+          return p.getTxnId() !== txnId;
+        });
         return inFlight ? [...filtered, event] : filtered;
       });
     };
@@ -428,7 +475,13 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
     }
   );
 
-  const rootEvent = thread?.rootEvent ?? room.findEventById(rootEventId);
+  const rootEvent = useMemo(
+    () => thread?.rootEvent ?? room.findEventById(rootEventId),
+    // tick re-evaluates after any thread/timeline mutation so a late-arriving
+    // root in room.findEventById is picked up.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [thread, room, rootEventId, tick]
+  );
   const replies: MatrixEvent[] = useMemo(() => {
     const liveEvents: MatrixEvent[] = thread?.liveTimeline.getEvents() ?? [];
     // Edits (m.replace) and reactions (m.annotation) are kept in the thread's
@@ -450,14 +503,22 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
       return id ? !liveIds.has(id) : true;
     });
     return [...messageEvents, ...stillPending].sort((a, b) => a.getTs() - b.getTs());
-  }, [thread, pendingEvents, rootEventId]);
+    // tick re-evaluates the live timeline after thread mutations (matrix-js-sdk
+    // reuses the same Thread instance, so thread reference equality is stable).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread, pendingEvents, rootEventId, tick]);
 
   const canSendReaction = permissions.event(EventType.Reaction, mx.getSafeUserId());
 
   const handleReactionToggle = useCallback(
     (targetEventId: string, key: string, shortcode?: string) => {
       const t = room.getThread(rootEventId);
-      const timelineSet = t?.timelineSet ?? room.getUnfilteredTimelineSet();
+      if (!t) {
+        // eslint-disable-next-line no-console
+        console.warn('[ThreadView] reaction toggle: thread not loaded yet');
+        return;
+      }
+      const timelineSet = t.timelineSet;
       const relations = getEventReactions(timelineSet, targetEventId);
       const allReactions = relations?.getSortedAnnotationsByKey() ?? [];
       const [, reactionsSet] = allReactions.find(([k]) => k === key) ?? [];
@@ -465,20 +526,26 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
       const myReaction = reactions.find(factoryEventSentBy(mx.getUserId()!));
 
       if (myReaction && !!myReaction.isRelation()) {
-        mx.redactEvent(room.roomId, myReaction.getId()!);
+        mx.redactEvent(room.roomId, myReaction.getId()!).catch((err) =>
+          // eslint-disable-next-line no-console
+          console.error('[ThreadView] reaction toggle failed', err)
+        );
         return;
       }
       const rShortcode =
         shortcode ||
         (reactions.find(eventWithShortcode)?.getContent().shortcode as string | undefined);
-      mx.sendEvent(room.roomId, rootEventId, MessageEvent.Reaction as string, {
+      mx.sendEvent(room.roomId, rootEventId, EventType.Reaction, {
         'm.relates_to': {
           rel_type: RelationType.Annotation,
           event_id: targetEventId,
           key,
         },
         ...(rShortcode ? { shortcode: rShortcode } : {}),
-      });
+      }).catch((err) =>
+        // eslint-disable-next-line no-console
+        console.error('[ThreadView] reaction toggle failed', err)
+      );
     },
     [mx, room, rootEventId]
   );
@@ -507,10 +574,16 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
                 hour24Clock={hour24Clock}
                 dateFormatString={dateFormatString}
               />
+            ) : rootFetchError ? (
+              <Box className={css.ThreadEmpty}>
+                <Text size="T200" priority="300">
+                  {rootFetchError}
+                </Text>
+              </Box>
             ) : (
               <Box className={css.ThreadEmpty}>
                 <Text size="T200" priority="300">
-                  Loading thread root…
+                  {rootFetchAttempted ? 'Loading thread root…' : 'Loading thread root…'}
                 </Text>
               </Box>
             )}
@@ -544,9 +617,16 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
       </Box>
       <Box shrink="No" direction="Column">
         <div style={{ padding: `0 ${config.space.S400}` }}>
-          {canMessage ? (
+          {rootFetchError ? (
+            <RoomInputPlaceholder
+              style={{ padding: config.space.S200 }}
+              alignItems="Center"
+              justifyContent="Center"
+            >
+              <Text align="Center">Thread root not loaded</Text>
+            </RoomInputPlaceholder>
+          ) : canMessage ? (
             <RoomInput
-              ref={inputRef}
               editor={editor}
               roomId={room.roomId}
               room={room}

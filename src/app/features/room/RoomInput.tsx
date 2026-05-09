@@ -126,13 +126,27 @@ interface RoomInputProps {
   roomId: string;
   room: Room;
   /**
-   * When set, the composer is operating inside a thread drawer. Slate body
+   * When set, the composer is operating inside a thread page. Slate body
    * drafts and reply drafts are isolated to per-thread atom families so typing
-   * in the drawer does not bleed into the room composer (R11 — Slate
+   * in the thread page does not bleed into the room composer (R11 — Slate
    * Descendant[] holds plaintext).
    */
   threadRootId?: string;
 }
+
+const getDraftAtoms = (roomId: string, threadRootId?: string) => {
+  if (threadRootId) {
+    const key = `${roomId}:${threadRootId}`;
+    return {
+      msgDraftAtom: threadMsgDraftAtomFamily(key),
+      replyDraftAtom: threadReplyDraftAtomFamily(key),
+    };
+  }
+  return {
+    msgDraftAtom: roomIdToMsgDraftAtomFamily(roomId),
+    replyDraftAtom: roomIdToReplyDraftAtomFamily(roomId),
+  };
+};
 export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
   ({ editor, fileDropContainerRef, roomId, room, threadRootId }, ref) => {
     const mx = useMatrixClient();
@@ -148,13 +162,7 @@ export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
     const powerLevels = usePowerLevelsContext();
     const creators = useRoomCreators(room);
 
-    const draftKey = threadRootId ? `${roomId}:${threadRootId}` : roomId;
-    const msgDraftAtom = threadRootId
-      ? threadMsgDraftAtomFamily(draftKey)
-      : roomIdToMsgDraftAtomFamily(roomId);
-    const replyDraftAtom = threadRootId
-      ? threadReplyDraftAtomFamily(draftKey)
-      : roomIdToReplyDraftAtomFamily(roomId);
+    const { msgDraftAtom, replyDraftAtom } = getDraftAtoms(roomId, threadRootId);
     const [msgDraft, setMsgDraft] = useAtom(msgDraftAtom);
     const [replyDraft, setReplyDraft] = useAtom(replyDraftAtom);
     const replyUserID = replyDraft?.userId;
@@ -242,16 +250,9 @@ export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
     );
 
     useEffect(() => {
-      // Ensure the editor always has a valid selection. Without one, Slate's
-      // backspace/deleteBackward path (and cinny's toggleKeyboardShortcut at
-      // editor/keyboard.ts:32) silently no-ops because both require
-      // editor.selection to be non-null. This shows up most clearly when a
-      // second composer (the thread drawer) mounts on the same page: clicks
-      // can land on the wrong editor and the room editor is left without a
-      // selection. Mirrors the pattern in MessageEditor.tsx mount effect.
-      if (!editor.selection) {
-        Transforms.select(editor, Editor.end(editor, []));
-      }
+      // Restore any prior draft body when the composer mounts. Drafts are
+      // stored as Slate Descendant[]; insertFragment merges them into the
+      // current editor selection.
       if (msgDraft.length === 0) return;
       Transforms.insertFragment(editor, msgDraft);
     }, [editor, msgDraft]);
@@ -399,21 +400,21 @@ export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
           content['m.relates_to'].is_falling_back = false;
         }
       }
-      // Inside a thread drawer the composer always sends to that thread, even
+      // Inside a thread page the composer always sends to that thread, even
       // when no replyDraft is set (sending the first reply). Otherwise fall back
-      // to the replyDraft's m.thread relation, if any.
+      // to the replyDraft's m.thread relation, if any. When threadRootId is set
+      // and content has no m.relates_to, the SDK's addThreadRelationIfNeeded
+      // decorates content with the m.thread relation (and an is_falling_back
+      // reply fallback) when given a threadId — so no manual m.relates_to here.
       const replyThreadId =
         replyDraft && replyDraft.relation?.rel_type === RelationType.Thread
           ? replyDraft.relation.event_id ?? null
           : null;
       const threadId: string | null = threadRootId ?? replyThreadId;
-      if (threadRootId && !content['m.relates_to']) {
-        // No replyDraft means the user is starting a fresh reply in the thread.
-        // The SDK's addThreadRelationIfNeeded will decorate content with the
-        // m.thread relation (and an is_falling_back reply fallback) when given
-        // a threadId, so we don't need to set m.relates_to manually here.
-      }
-      mx.sendMessage(roomId, threadId, content as any);
+      mx.sendMessage(roomId, threadId, content as any).catch((err) =>
+        // eslint-disable-next-line no-console
+        console.error('[RoomInput] send failed', err)
+      );
       resetEditor(editor);
       resetEditorHistory(editor);
       setReplyDraft(undefined);

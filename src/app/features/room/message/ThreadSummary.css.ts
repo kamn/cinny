@@ -2,9 +2,20 @@ import { style } from '@vanilla-extract/css';
 import { color, config, toRem } from 'folds';
 
 export const ThreadSummary = style({
+  display: 'flex',
+  alignItems: 'center',
+  gap: config.space.S200,
+  width: '100%',
   marginTop: toRem(2),
   padding: `${toRem(2)} ${config.space.S200}`,
   borderRadius: config.radii.R300,
+  // Button reset — moved out of inline styles so the visual contract lives
+  // alongside the rest of the ThreadSummary tokens.
+  background: 'none',
+  border: 'none',
+  textAlign: 'left',
+  font: 'inherit',
+  color: 'inherit',
   selectors: {
     'button&': {
       cursor: 'pointer',
@@ -13,6 +24,10 @@ export const ThreadSummary = style({
       backgroundColor: color.SurfaceVariant.Container,
     },
   },
+});
+
+export const ThreadSummaryOverflow = style({
+  marginLeft: config.space.S100,
 });
 
 export const ThreadSummaryIcon = style({

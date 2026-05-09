@@ -36,13 +36,12 @@ export const useRoomNavigate = () => {
 
   const navigateRoom = useCallback(
     (roomId: string, eventId?: string, opts?: NavigateOptions & { threadRootId?: string }) => {
+      const { threadRootId, ...navOpts } = opts ?? {};
       const roomIdOrAlias = getCanonicalAliasOrRoomId(mx, roomId);
       const openSpaceTimeline = developerTools && spaceSelectedId === roomId;
 
       const withThread = (path: string): string =>
-        opts?.threadRootId
-          ? withSearchParam(path, { [THREAD_SEARCH_PARAM]: opts.threadRootId })
-          : path;
+        threadRootId ? withSearchParam(path, { [THREAD_SEARCH_PARAM]: threadRootId }) : path;
 
       const orphanParents = openSpaceTimeline ? [roomId] : getOrphanParents(roomToParents, roomId);
       if (orphanParents.length > 0) {
@@ -59,17 +58,17 @@ export const useRoomNavigate = () => {
           withThread(
             getSpaceRoomPath(pSpaceIdOrAlias, openSpaceTimeline ? roomId : roomIdOrAlias, eventId)
           ),
-          opts
+          navOpts
         );
         return;
       }
 
       if (mDirects.has(roomId)) {
-        navigate(withThread(getDirectRoomPath(roomIdOrAlias, eventId)), opts);
+        navigate(withThread(getDirectRoomPath(roomIdOrAlias, eventId)), navOpts);
         return;
       }
 
-      navigate(withThread(getHomeRoomPath(roomIdOrAlias, eventId)), opts);
+      navigate(withThread(getHomeRoomPath(roomIdOrAlias, eventId)), navOpts);
     },
     [mx, navigate, spaceSelectedId, roomToParents, mDirects, developerTools]
   );

@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import { Box, Line } from 'folds';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { isKeyHotkey } from 'is-hotkey';
 import { useAtomValue } from 'jotai';
 import { RoomView } from './RoomView';
@@ -25,7 +25,6 @@ export const THREAD_SEARCH_PARAM = 'thread';
 export function Room() {
   const { eventId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
   const room = useRoom();
   const mx = useMatrixClient();
 
@@ -39,34 +38,30 @@ export function Room() {
   const threadRootId = searchParams.get(THREAD_SEARCH_PARAM) ?? undefined;
 
   const handleThreadBack = useCallback(() => {
-    // Drop the thread search param. If history has a prior entry from this
-    // tab, prefer browser-back so back/forward stays consistent; otherwise
-    // strip the param from the URL in place.
-    if (window.history.length > 1) {
-      navigate(-1);
-      return;
-    }
+    // Drop the thread search param in place. We avoid navigate(-1) — the
+    // history-length heuristic is unreliable across deep links and tab
+    // restorations, and stripping the param keeps back/forward consistent.
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       next.delete(THREAD_SEARCH_PARAM);
       return next;
     });
-  }, [navigate, setSearchParams]);
+  }, [setSearchParams]);
+
+  const callView = room.isCallRoom();
+  const inThread = !callView && threadRootId !== undefined;
 
   useKeyDown(
     window,
     useCallback(
       (evt) => {
-        if (isKeyHotkey('escape', evt)) {
+        if (isKeyHotkey('escape', evt) && !inThread) {
           markAsRead(mx, room.roomId, hideActivity);
         }
       },
-      [mx, room.roomId, hideActivity]
+      [mx, room.roomId, hideActivity, inThread]
     )
   );
-
-  const callView = room.isCallRoom();
-  const inThread = !callView && threadRootId !== undefined;
 
   return (
     <PowerLevelsContextProvider value={powerLevels}>
