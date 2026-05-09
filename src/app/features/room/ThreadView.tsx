@@ -15,9 +15,11 @@ import {
 } from 'folds';
 import { Opts as LinkifyOpts } from 'linkifyjs';
 import {
+  EventStatus,
   EventType,
   MatrixEvent,
   MatrixEventEvent,
+  RelationType,
   Room,
   RoomEvent,
   Thread,
@@ -197,6 +199,15 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
 
   const [thread, setThread] = useState<Thread | null>(() => room.getThread(rootEventId));
   const [, setTick] = useState(0);
+  // Pending thread replies — local echoes the SDK doesn't insert into
+  // thread.liveTimeline. With pendingEventOrdering=Chronological (the cinny
+  // default), Room.addPendingEvent tries to add into the unfiltered timeline
+  // set, which rejects thread events via canContain. The Thread itself only
+  // tracks lastPendingEvent/pendingReplyCount through onLocalEcho, so the
+  // outgoing message would otherwise sit invisible until /sync echo comes
+  // back. We mirror in-flight thread replies into local state and merge them
+  // with the live timeline below.
+  const [pendingEvents, setPendingEvents] = useState<MatrixEvent[]>([]);
 
   useEffect(() => {
     const sync = () => {
@@ -216,6 +227,31 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
       room.off(ThreadEvent.Update, sync);
       room.off(RoomEvent.Timeline, sync);
       room.off(MatrixEventEvent.Decrypted, sync);
+    };
+  }, [room, rootEventId]);
+
+  useEffect(() => {
+    const handler = (event: MatrixEvent) => {
+      if (event.threadRootId !== rootEventId) return;
+      if (!event.isRelation(RelationType.Thread)) return;
+
+      const status = event.status;
+      const inFlight =
+        status === EventStatus.SENDING ||
+        status === EventStatus.QUEUED ||
+        status === EventStatus.ENCRYPTING ||
+        status === EventStatus.SENT ||
+        status === EventStatus.NOT_SENT;
+
+      const txnId = event.getTxnId();
+      setPendingEvents((prev) => {
+        const filtered = prev.filter((p) => p.getTxnId() !== txnId || !txnId);
+        return inFlight ? [...filtered, event] : filtered;
+      });
+    };
+    room.on(RoomEvent.LocalEchoUpdated, handler);
+    return () => {
+      room.off(RoomEvent.LocalEchoUpdated, handler);
     };
   }, [room, rootEventId]);
 
@@ -362,10 +398,18 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
 
   const rootEvent = thread?.rootEvent ?? room.findEventById(rootEventId);
   const replies: MatrixEvent[] = useMemo(() => {
-    if (!thread) return [];
-    const events: MatrixEvent[] = thread.liveTimeline.getEvents();
-    return events.filter((evt: MatrixEvent) => evt.getId() !== rootEventId);
-  }, [thread, rootEventId]);
+    const liveEvents: MatrixEvent[] = thread?.liveTimeline.getEvents() ?? [];
+    const filteredLive = liveEvents.filter((evt) => evt.getId() !== rootEventId);
+    const liveIds = new Set(filteredLive.map((evt) => evt.getId()));
+    // Merge in pending events that haven't yet been promoted to the live
+    // timeline by remote echo. Dedupe by event id since handleRemoteEcho keeps
+    // the same MatrixEvent reference and updates its id in place.
+    const stillPending = pendingEvents.filter((evt) => {
+      const id = evt.getId();
+      return id ? !liveIds.has(id) : true;
+    });
+    return [...filteredLive, ...stillPending].sort((a, b) => a.getTs() - b.getTs());
+  }, [thread, pendingEvents, rootEventId]);
 
   return (
     <Page ref={pageRef}>
