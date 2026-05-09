@@ -242,6 +242,16 @@ export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
     );
 
     useEffect(() => {
+      // Ensure the editor always has a valid selection. Without one, Slate's
+      // backspace/deleteBackward path (and cinny's toggleKeyboardShortcut at
+      // editor/keyboard.ts:32) silently no-ops because both require
+      // editor.selection to be non-null. This shows up most clearly when a
+      // second composer (the thread drawer) mounts on the same page: clicks
+      // can land on the wrong editor and the room editor is left without a
+      // selection. Mirrors the pattern in MessageEditor.tsx mount effect.
+      if (!editor.selection) {
+        Transforms.select(editor, Editor.end(editor, []));
+      }
       if (msgDraft.length === 0) return;
       Transforms.insertFragment(editor, msgDraft);
     }, [editor, msgDraft]);

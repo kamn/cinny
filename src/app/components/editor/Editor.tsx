@@ -1,6 +1,7 @@
 /* eslint-disable no-param-reassign */
 import React, {
   ClipboardEventHandler,
+  FocusEventHandler,
   KeyboardEventHandler,
   ReactNode,
   forwardRef,
@@ -8,7 +9,7 @@ import React, {
   useState,
 } from 'react';
 import { Box, Scroll, Text } from 'folds';
-import { Descendant, Editor, createEditor } from 'slate';
+import { Descendant, Editor, Transforms, createEditor } from 'slate';
 import {
   Slate,
   Editable,
@@ -106,6 +107,20 @@ export const CustomEditor = forwardRef<HTMLDivElement, CustomEditorProps>(
       [editor, onKeyDown]
     );
 
+    // Slate-react usually syncs editor.selection from the native selection on
+    // mouse interaction, but with multiple Slate editors mounted in the same
+    // tree (e.g. main room composer + thread drawer composer) some click paths
+    // can leave editor.selection null while the contenteditable still has focus.
+    // Without a selection, both Slate's deleteBackward and cinny's
+    // toggleKeyboardShortcut backspace branch silently no-op — typing works
+    // (insertText creates a selection from the caret) but Backspace doesn't.
+    // Recover by ensuring a selection exists on focus.
+    const handleFocus: FocusEventHandler = useCallback(() => {
+      if (!editor.selection) {
+        Transforms.select(editor, Editor.end(editor, []));
+      }
+    }, [editor]);
+
     const renderPlaceholder = useCallback(
       ({ attributes, children }: RenderPlaceholderProps) => (
         <span {...attributes} className={css.EditorPlaceholderContainer}>
@@ -145,6 +160,7 @@ export const CustomEditor = forwardRef<HTMLDivElement, CustomEditorProps>(
                 renderLeaf={renderLeaf}
                 onKeyDown={handleKeydown}
                 onKeyUp={onKeyUp}
+                onFocus={handleFocus}
                 onPaste={onPaste}
               />
             </Scroll>
