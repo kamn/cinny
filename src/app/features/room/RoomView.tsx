@@ -3,8 +3,6 @@ import { Box, Text, config } from 'folds';
 import { EventType } from 'matrix-js-sdk';
 import { ReactEditor } from 'slate-react';
 import { isKeyHotkey } from 'is-hotkey';
-import { useAtomValue } from 'jotai';
-import { roomRightPanelAtomFamily } from '../../state/room/roomRightPanel';
 import { useStateEvent } from '../../hooks/useStateEvent';
 import { StateEvent } from '../../../types/matrix/room';
 import { usePowerLevelsContext } from '../../hooks/usePowerLevels';
@@ -65,18 +63,6 @@ export function RoomView({ eventId }: { eventId?: string }) {
   const room = useRoom();
   const { roomId } = room;
   const editor = useEditor();
-  // Remount the room composer whenever the right-panel slot toggles between
-  // null and an open phase. Slate's per-editor weakmaps and DOM-↔-model sync
-  // get into a wedged state when a second <Editable> mounts in the tree on
-  // top of an already-mounted one — text gets typed into the contenteditable
-  // but Slate's beforeinput interception fails so editor.children stays stale
-  // and Backspace silently no-ops. Forcing a clean remount when the drawer
-  // opens or closes resets the slate-react bookkeeping.
-  const rightPanel = useAtomValue(roomRightPanelAtomFamily(roomId));
-  // Only the thread drawer mounts a second <Editable>; MembersDrawer doesn't,
-  // so toggling members shouldn't trigger a composer remount.
-  const composerKey =
-    typeof rightPanel === 'object' && rightPanel?.phase === 'thread' ? 'with-thread' : 'solo';
 
   const mx = useMatrixClient();
 
@@ -128,7 +114,6 @@ export function RoomView({ eventId }: { eventId?: string }) {
             <>
               {canMessage && (
                 <RoomInput
-                  key={composerKey}
                   room={room}
                   editor={editor}
                   roomId={roomId}
