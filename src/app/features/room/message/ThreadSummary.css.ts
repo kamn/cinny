@@ -9,7 +9,13 @@ export const ThreadSummary = style({
   display: 'flex',
   alignItems: 'center',
   gap: config.space.S200,
-  width: '100%',
+  // Fixed width so the affordance reads uniformly across the timeline,
+  // independent of the message body width. The Message content Box uses
+  // alignSelf="Start" and sizes to its content, so width: 100% would inherit
+  // the body width — short messages got narrow badges, long ones wide. Cap at
+  // 100% so the box still shrinks on narrow viewports.
+  width: toRem(440),
+  maxWidth: '100%',
   marginTop: config.space.S100,
   padding: `${config.space.S100} ${config.space.S200}`,
   borderRadius: config.radii.R300,
