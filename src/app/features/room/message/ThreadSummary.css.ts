@@ -1,27 +1,56 @@
 import { style } from '@vanilla-extract/css';
 import { color, config, toRem } from 'folds';
 
+// Boxed thread summary affordance — borrows from Slack/Element thread badges:
+// participant avatars + count + last-activity time, surrounded by a faint
+// border that strengthens on hover, plus a chevron that fades in on hover so
+// the affordance reads as "click to open".
 export const ThreadSummary = style({
   display: 'flex',
   alignItems: 'center',
   gap: config.space.S200,
   width: '100%',
-  marginTop: toRem(2),
-  padding: `${toRem(2)} ${config.space.S200}`,
+  marginTop: config.space.S100,
+  padding: `${config.space.S100} ${config.space.S200}`,
   borderRadius: config.radii.R300,
+  border: `${toRem(1)} solid ${color.SurfaceVariant.ContainerLine}`,
   // Button reset — moved out of inline styles so the visual contract lives
   // alongside the rest of the ThreadSummary tokens.
   background: 'none',
-  border: 'none',
   textAlign: 'left',
   font: 'inherit',
   color: 'inherit',
+  transition: 'background-color 80ms ease, border-color 80ms ease',
   selectors: {
     'button&': {
       cursor: 'pointer',
     },
     ':hover&': {
       backgroundColor: color.SurfaceVariant.Container,
+      borderColor: color.SurfaceVariant.ContainerActive,
+    },
+  },
+});
+
+// Push the time + chevron to the right edge.
+export const ThreadSummarySpacer = style({
+  flexGrow: 1,
+});
+
+export const ThreadSummaryTime = style({
+  flexShrink: 0,
+});
+
+// Chevron is invisible by default and slides in from the left on hover.
+export const ThreadSummaryChevron = style({
+  flexShrink: 0,
+  opacity: 0,
+  transform: `translateX(${toRem(-4)})`,
+  transition: 'opacity 100ms ease, transform 100ms ease',
+  selectors: {
+    [`${ThreadSummary}:hover &`]: {
+      opacity: config.opacity.P500,
+      transform: 'translateX(0)',
     },
   },
 });

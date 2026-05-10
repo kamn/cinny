@@ -15,6 +15,9 @@ import { getMxIdLocalPart, mxcUrlToHttp } from '../../../utils/matrix';
 import { useMatrixClient } from '../../../hooks/useMatrixClient';
 import { useMediaAuthentication } from '../../../hooks/useMediaAuthentication';
 import { UserAvatar } from '../../../components/user-avatar';
+import { Time } from '../../../components/message';
+import { useSetting } from '../../../state/hooks/settings';
+import { settingsAtom } from '../../../state/settings';
 import * as css from './ThreadSummary.css';
 
 type ThreadSummaryProps = {
@@ -60,6 +63,8 @@ function collectParticipants(thread: Thread): string[] {
 export function ThreadSummary({ room, mEvent, onOpen }: ThreadSummaryProps) {
   const mx = useMatrixClient();
   const useAuthentication = useMediaAuthentication();
+  const [hour24Clock] = useSetting(settingsAtom, 'hour24Clock');
+  const [dateFormatString] = useSetting(settingsAtom, 'dateFormatString');
   const eventId = mEvent.getId();
   const [thread, setThread] = useState<Thread | null>(() =>
     eventId ? room.getThread(eventId) : null
@@ -120,6 +125,11 @@ export function ThreadSummary({ room, mEvent, onOpen }: ThreadSummaryProps) {
   const visibleAvatars = participants.slice(0, MAX_AVATARS);
   const overflow = participants.length - visibleAvatars.length;
   const hasUnread = unreadTotal > 0 || unreadHighlight > 0;
+  // thread.replyToEvent prefers the lastPendingEvent, then lastEvent, then
+  // lastReply() — so this matches what users would consider "the last
+  // activity" in the thread (Slack/Element use the same surface).
+  const lastReply = thread.replyToEvent;
+  const lastReplyTs = lastReply?.getTs();
 
   return (
     <Box
@@ -169,6 +179,16 @@ export function ThreadSummary({ room, mEvent, onOpen }: ThreadSummaryProps) {
           )}
         </Box>
       )}
+      <span className={css.ThreadSummarySpacer} />
+      {lastReplyTs !== undefined && (
+        <Time
+          className={css.ThreadSummaryTime}
+          ts={lastReplyTs}
+          compact
+          hour24Clock={hour24Clock}
+          dateFormatString={dateFormatString}
+        />
+      )}
       {hasUnread && (
         <span
           className={classNames(
@@ -178,6 +198,7 @@ export function ThreadSummary({ room, mEvent, onOpen }: ThreadSummaryProps) {
           aria-hidden
         />
       )}
+      <Icon className={css.ThreadSummaryChevron} size="100" src={Icons.ChevronRight} />
     </Box>
   );
 }
