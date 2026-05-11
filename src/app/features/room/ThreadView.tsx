@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { HTMLReactParserOptions } from 'html-react-parser';
 import {
   Avatar,
@@ -221,6 +221,12 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
   const useAuthentication = useMediaAuthentication();
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
+  // Stick-to-bottom: track whether the user is at/near the bottom of the
+  // thread. Updated on every scroll event. When new replies arrive, the
+  // layout effect below uses this to auto-scroll only if the user was already
+  // reading the bottom (matching Slack/Element thread-pane behavior).
+  const stickToBottomRef = useRef(true);
+  const hasAutoScrolledOnceRef = useRef(false);
   const editor = useEditor();
   const powerLevels = usePowerLevelsContext();
   const creators = useRoomCreators(room);
@@ -334,6 +340,22 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
       room.off(RoomEvent.LocalEchoUpdated, handler);
     };
   }, [room, rootEventId]);
+
+  // Update stickToBottomRef on every scroll. ~80px below the bottom edge still
+  // counts as "at bottom" so a tiny mouse-wheel nudge doesn't strand the user
+  // away from new replies.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return undefined;
+    const handleScroll = () => {
+      const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      stickToBottomRef.current = distFromBottom < 80;
+    };
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
 
   const handleBack = useCallback(() => {
     onBack();
@@ -557,6 +579,19 @@ export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
   );
 
   const editTimelineSet = thread?.timelineSet ?? room.getUnfilteredTimelineSet();
+
+  // Stick-to-bottom: after replies render, if the user was at the bottom
+  // (or this is the first paint), scroll to the new bottom so new responses
+  // are visible without a manual scroll. If the user has scrolled up to read
+  // history, leave their position alone.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (!hasAutoScrolledOnceRef.current || stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+      hasAutoScrolledOnceRef.current = true;
+    }
+  }, [replies.length, rootEvent]);
 
   return (
     <Page ref={pageRef}>
