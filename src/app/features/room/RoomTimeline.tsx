@@ -48,6 +48,7 @@ import {
 import { isKeyHotkey } from 'is-hotkey';
 import { Opts as LinkifyOpts } from 'linkifyjs';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
 import { eventWithShortcode, factoryEventSentBy, getMxIdLocalPart } from '../../utils/matrix';
 import { useMatrixClient } from '../../hooks/useMatrixClient';
 import { useVirtualPaginator, ItemRange } from '../../hooks/useVirtualPaginator';
@@ -87,7 +88,7 @@ import {
 import { useSetting } from '../../state/hooks/settings';
 import { MessageLayout, settingsAtom } from '../../state/settings';
 import { useMatrixEventRenderer } from '../../hooks/useMatrixEventRenderer';
-import { Reactions, Message, Event, EncryptedContent } from './message';
+import { Reactions, Message, Event, EncryptedContent, ThreadSummary } from './message';
 import { useMemberEventParser } from '../../hooks/useMemberEventParser';
 import * as customHtmlCss from '../../styles/CustomHtml.css';
 import { RoomIntro } from '../../components/room-intro';
@@ -102,6 +103,7 @@ import * as css from './RoomTimeline.css';
 import { inSameDay, minuteDifference, timeDayMonthYear, today, yesterday } from '../../utils/time';
 import { createMentionElement, isEmptyEditor, moveCursor } from '../../components/editor';
 import { roomIdToReplyDraftAtomFamily } from '../../state/room/roomInputDrafts';
+import { THREAD_SEARCH_PARAM } from './Room';
 import { usePowerLevelsContext } from '../../hooks/usePowerLevels';
 import { GetContentCallback, MessageEvent, StateEvent } from '../../../types/matrix/room';
 import { useKeyDown } from '../../hooks/useKeyDown';
@@ -455,6 +457,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
   const ignoredUsersSet = useMemo(() => new Set(ignoredUsersList), [ignoredUsersList]);
 
   const setReplyDraft = useSetAtom(roomIdToReplyDraftAtomFamily(room.roomId));
+  const [, setSearchParams] = useSearchParams();
   const powerLevels = usePowerLevelsContext();
   const creators = useRoomCreators(room);
 
@@ -912,6 +915,32 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
     [handleOpenEvent]
   );
 
+  // Open the thread page for a given event. Per R15, if the target itself is a
+  // thread reply, walk to its threadRootId so we always land on the root, not
+  // a mid-chain reply.
+  const openThread = useCallback(
+    (eventId: string) => {
+      const targetEvent = room.findEventById(eventId);
+      const rootEventId = targetEvent?.threadRootId ?? eventId;
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.set(THREAD_SEARCH_PARAM, rootEventId);
+        return next;
+      });
+    },
+    [room, setSearchParams]
+  );
+
+  const handleThreadIndicatorClick: MouseEventHandler<HTMLButtonElement> = useCallback(
+    (evt) => {
+      evt.stopPropagation();
+      const targetId = evt.currentTarget.getAttribute('data-event-id');
+      if (!targetId) return;
+      openThread(targetId);
+    },
+    [openThread]
+  );
+
   const handleUserClick: MouseEventHandler<HTMLButtonElement> = useCallback(
     (evt) => {
       evt.preventDefault();
@@ -953,7 +982,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
   );
 
   const handleReplyClick: MouseEventHandler<HTMLButtonElement> = useCallback(
-    (evt, startThread = false) => {
+    (evt) => {
       const replyId = evt.currentTarget.getAttribute('data-event-id');
       if (!replyId) {
         console.warn('Button should have "data-event-id" attribute!');
@@ -964,9 +993,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
       const editedReply = getEditedEvent(replyId, replyEvt, room.getUnfilteredTimelineSet());
       const content: IContent = editedReply?.getContent()['m.new_content'] ?? replyEvt.getContent();
       const { body, formatted_body: formattedBody } = content;
-      const { 'm.relates_to': relation } = startThread
-        ? { 'm.relates_to': { rel_type: 'm.thread', event_id: replyId } }
-        : replyEvt.getWireContent();
+      const { 'm.relates_to': relation } = replyEvt.getWireContent();
       const senderId = replyEvt.getSender();
       if (senderId && typeof body === 'string') {
         setReplyDraft({
@@ -1057,6 +1084,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
             onUserClick={handleUserClick}
             onUsernameClick={handleUsernameClick}
             onReplyClick={handleReplyClick}
+            onOpenThread={openThread}
             onReactionToggle={handleReactionToggle}
             onEditId={handleEdit}
             reply={
@@ -1067,6 +1095,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
                   replyEventId={replyEventId}
                   threadRootId={threadRootId}
                   onClick={handleOpenReply}
+                  onThreadClick={handleThreadIndicatorClick}
                   getMemberPowerTag={getMemberPowerTag}
                   accessibleTagColors={accessiblePowerTagColors}
                   legacyUsernameColor={legacyUsernameColor || direct}
@@ -1084,6 +1113,11 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
                   onReactionToggle={handleReactionToggle}
                 />
               )
+            }
+            threadSummary={
+              mEvent.getId() && room.getThread(mEvent.getId()!) ? (
+                <ThreadSummary room={room} mEvent={mEvent} onOpen={openThread} />
+              ) : undefined
             }
             hideReadReceipts={hideActivity}
             showDeveloperTools={showDeveloperTools}
@@ -1139,6 +1173,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
             onUserClick={handleUserClick}
             onUsernameClick={handleUsernameClick}
             onReplyClick={handleReplyClick}
+            onOpenThread={openThread}
             onReactionToggle={handleReactionToggle}
             onEditId={handleEdit}
             reply={
@@ -1149,6 +1184,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
                   replyEventId={replyEventId}
                   threadRootId={threadRootId}
                   onClick={handleOpenReply}
+                  onThreadClick={handleThreadIndicatorClick}
                   getMemberPowerTag={getMemberPowerTag}
                   accessibleTagColors={accessiblePowerTagColors}
                   legacyUsernameColor={legacyUsernameColor || direct}
@@ -1166,6 +1202,11 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
                   onReactionToggle={handleReactionToggle}
                 />
               )
+            }
+            threadSummary={
+              mEvent.getId() && room.getThread(mEvent.getId()!) ? (
+                <ThreadSummary room={room} mEvent={mEvent} onOpen={openThread} />
+              ) : undefined
             }
             hideReadReceipts={hideActivity}
             showDeveloperTools={showDeveloperTools}
@@ -1257,6 +1298,7 @@ export function RoomTimeline({ room, eventId, roomInputRef, editor }: RoomTimeli
             onUserClick={handleUserClick}
             onUsernameClick={handleUsernameClick}
             onReplyClick={handleReplyClick}
+            onOpenThread={openThread}
             onReactionToggle={handleReactionToggle}
             reactions={
               reactionRelations && (

@@ -1,0 +1,690 @@
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { HTMLReactParserOptions } from 'html-react-parser';
+import {
+  Avatar,
+  Box,
+  Header,
+  Icon,
+  IconButton,
+  Icons,
+  Scroll,
+  Text,
+  Tooltip,
+  TooltipProvider,
+  config,
+} from 'folds';
+import { Opts as LinkifyOpts } from 'linkifyjs';
+import {
+  EventStatus,
+  EventType,
+  MatrixEvent,
+  MatrixEventEvent,
+  RelationType,
+  Relations,
+  Room,
+  RoomEvent,
+  Thread,
+  ThreadEvent,
+} from 'matrix-js-sdk';
+import to from 'await-to-js';
+import * as css from './ThreadView.css';
+import { useEditor } from '../../components/editor';
+import { useMatrixClient } from '../../hooks/useMatrixClient';
+import { useMediaAuthentication } from '../../hooks/useMediaAuthentication';
+import { useMentionClickHandler } from '../../hooks/useMentionClickHandler';
+import { useSpoilerClickHandler } from '../../hooks/useSpoilerClickHandler';
+import { useMatrixEventRenderer } from '../../hooks/useMatrixEventRenderer';
+import { useSetting } from '../../state/hooks/settings';
+import { settingsAtom } from '../../state/settings';
+import {
+  factoryRenderLinkifyWithMention,
+  getReactCustomHtmlParser,
+  LINKIFY_OPTS,
+  makeMentionCustomProps,
+  renderMatrixMention,
+} from '../../plugins/react-custom-html-parser';
+import {
+  getEditedEvent,
+  getEventReactions,
+  getMemberAvatarMxc,
+  getMemberDisplayName,
+} from '../../utils/room';
+import {
+  eventWithShortcode,
+  factoryEventSentBy,
+  getMxIdLocalPart,
+  mxcUrlToHttp,
+} from '../../utils/matrix';
+import { EncryptedContent, Reactions } from './message';
+import {
+  AvatarBase,
+  ImageContent,
+  MessageNotDecryptedContent,
+  MessageUnsupportedContent,
+  MSticker,
+  ModernLayout,
+  RedactedContent,
+  Time,
+  Username,
+  UsernameBold,
+} from '../../components/message';
+import { RenderMessageContent } from '../../components/RenderMessageContent';
+import { Image } from '../../components/media';
+import { ImageViewer } from '../../components/image-viewer';
+import { UserAvatar } from '../../components/user-avatar';
+import { GetContentCallback, MessageEvent } from '../../../types/matrix/room';
+import * as customHtmlCss from '../../styles/CustomHtml.css';
+import { Page } from '../../components/page';
+import { useRoomPermissions } from '../../hooks/useRoomPermissions';
+import { usePowerLevelsContext } from '../../hooks/usePowerLevels';
+import { useRoomCreators } from '../../hooks/useRoomCreators';
+import { RoomInput } from './RoomInput';
+import { RoomInputPlaceholder } from './RoomInputPlaceholder';
+
+type ThreadEventItemProps = {
+  room: Room;
+  mEvent: MatrixEvent;
+  renderContent: ReturnType<
+    typeof useMatrixEventRenderer<[MatrixEvent, string, GetContentCallback]>
+  >;
+  reactionRelations?: Relations | null;
+  canSendReaction?: boolean;
+  onReactionToggle: (targetEventId: string, key: string, shortcode?: string) => void;
+  editTimelineSet: ReturnType<Room['getUnfilteredTimelineSet']>;
+  hour24Clock: boolean;
+  dateFormatString: string;
+};
+
+function ThreadEventItem({
+  room,
+  mEvent,
+  renderContent,
+  reactionRelations,
+  canSendReaction,
+  onReactionToggle,
+  editTimelineSet,
+  hour24Clock,
+  dateFormatString,
+}: ThreadEventItemProps) {
+  const mx = useMatrixClient();
+  const useAuthentication = useMediaAuthentication();
+  const senderId = mEvent.getSender() ?? '';
+  const displayName =
+    getMemberDisplayName(room, senderId) ?? getMxIdLocalPart(senderId) ?? senderId;
+  const senderAvatarMxc = getMemberAvatarMxc(room, senderId);
+  // Edits live in the thread's timelineSet (addRelatedThreadEvent in
+  // matrix-js-sdk/lib/models/thread.js puts m.replace there); look there
+  // first, fall back to the unfiltered set for the root.
+  const editedEvent = getEditedEvent(mEvent.getId() ?? '', mEvent, editTimelineSet);
+  const getContent = (() =>
+    editedEvent?.getContent()['m.new_content'] ?? mEvent.getContent()) as GetContentCallback;
+  const eventId = mEvent.getId();
+  const reactionsBySortedKey = reactionRelations?.getSortedAnnotationsByKey() ?? null;
+  const hasReactions = !!reactionsBySortedKey && reactionsBySortedKey.length > 0;
+
+  return (
+    <ModernLayout
+      before={
+        <AvatarBase>
+          <Avatar size="300">
+            <UserAvatar
+              userId={senderId}
+              src={
+                senderAvatarMxc
+                  ? mxcUrlToHttp(mx, senderAvatarMxc, useAuthentication, 48, 48, 'crop') ??
+                    undefined
+                  : undefined
+              }
+              alt={displayName}
+              renderFallback={() => <Icon size="200" src={Icons.User} filled />}
+            />
+          </Avatar>
+        </AvatarBase>
+      }
+    >
+      <Box gap="200" alignItems="Baseline">
+        <Username>
+          <Text as="span" size="T400" truncate>
+            <UsernameBold>{displayName}</UsernameBold>
+          </Text>
+        </Username>
+        <Time ts={mEvent.getTs()} hour24Clock={hour24Clock} dateFormatString={dateFormatString} />
+      </Box>
+      {renderContent(mEvent.getType() ?? '', false, mEvent, displayName, getContent)}
+      {hasReactions && eventId && reactionRelations && (
+        <Reactions
+          style={{ marginTop: config.space.S200 }}
+          room={room}
+          relations={reactionRelations}
+          mEventId={eventId}
+          canSendReaction={canSendReaction}
+          onReactionToggle={onReactionToggle}
+        />
+      )}
+    </ModernLayout>
+  );
+}
+
+type ThreadViewHeaderProps = {
+  room: Room;
+  onBack: () => void;
+};
+
+function ThreadViewHeader({ room, onBack }: ThreadViewHeaderProps) {
+  const roomName = room.name || 'Room';
+
+  return (
+    <Header className={css.ThreadViewHeader} variant="Surface" size="600">
+      <Box grow="Yes" alignItems="Center" gap="200">
+        <Box shrink="No" alignItems="Center">
+          <TooltipProvider
+            position="Bottom"
+            align="Start"
+            offset={4}
+            tooltip={
+              <Tooltip>
+                <Text>Back to {roomName}</Text>
+              </Tooltip>
+            }
+          >
+            {(triggerRef) => (
+              <IconButton ref={triggerRef} variant="Surface" onClick={onBack}>
+                <Icon src={Icons.ArrowLeft} />
+              </IconButton>
+            )}
+          </TooltipProvider>
+        </Box>
+        <Box grow="Yes" alignItems="Center" gap="200">
+          <Icon size="200" src={Icons.Thread} />
+          <Box direction="Column">
+            <Text size="H5" truncate>
+              Thread
+            </Text>
+            <Text size="T200" priority="300" truncate>
+              {roomName}
+            </Text>
+          </Box>
+        </Box>
+      </Box>
+    </Header>
+  );
+}
+
+type ThreadViewProps = {
+  room: Room;
+  rootEventId: string;
+  onBack: () => void;
+};
+
+export function ThreadView({ room, rootEventId, onBack }: ThreadViewProps) {
+  const mx = useMatrixClient();
+  const useAuthentication = useMediaAuthentication();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
+  // Stick-to-bottom: track whether the user is at/near the bottom of the
+  // thread. Updated on every scroll event. When new replies arrive, the
+  // layout effect below uses this to auto-scroll only if the user was already
+  // reading the bottom (matching Slack/Element thread-pane behavior).
+  const stickToBottomRef = useRef(true);
+  const hasAutoScrolledOnceRef = useRef(false);
+  const editor = useEditor();
+  const powerLevels = usePowerLevelsContext();
+  const creators = useRoomCreators(room);
+  const permissions = useRoomPermissions(creators, powerLevels);
+  const canMessage = permissions.event(EventType.RoomMessage, mx.getSafeUserId());
+
+  const [mediaAutoLoad] = useSetting(settingsAtom, 'mediaAutoLoad');
+  const [showUrlPreview] = useSetting(settingsAtom, 'urlPreview');
+  const [hour24Clock] = useSetting(settingsAtom, 'hour24Clock');
+  const [dateFormatString] = useSetting(settingsAtom, 'dateFormatString');
+  const [showHiddenEvents] = useSetting(settingsAtom, 'showHiddenEvents');
+
+  const [thread, setThread] = useState<Thread | null>(() => room.getThread(rootEventId));
+  const [tick, setTick] = useState(0);
+  const [rootFetchError, setRootFetchError] = useState<string | null>(null);
+  const [rootFetchAttempted, setRootFetchAttempted] = useState(false);
+  // Pending thread replies — local echoes the SDK doesn't insert into
+  // thread.liveTimeline. With pendingEventOrdering=Chronological (the cinny
+  // default), Room.addPendingEvent tries to add into the unfiltered timeline
+  // set, which rejects thread events via canContain. The Thread itself only
+  // tracks lastPendingEvent/pendingReplyCount through onLocalEcho, so the
+  // outgoing message would otherwise sit invisible until /sync echo comes
+  // back. We mirror in-flight thread replies into local state and merge them
+  // with the live timeline below.
+  const [pendingEvents, setPendingEvents] = useState<MatrixEvent[]>([]);
+
+  useEffect(() => {
+    const sync = (event?: unknown) => {
+      // RoomEvent.Timeline / MatrixEventEvent.Decrypted pass a MatrixEvent as
+      // their first arg. ThreadEvent.New / ThreadEvent.Update pass a Thread,
+      // which has no getId(). Only filter when we have a MatrixEvent in hand.
+      if (
+        event &&
+        typeof (event as MatrixEvent).getId === 'function' &&
+        typeof (event as MatrixEvent).threadRootId !== 'undefined'
+      ) {
+        const ev = event as MatrixEvent;
+        const eventThreadRoot = ev.threadRootId;
+        const eventId = ev.getId();
+        if (eventThreadRoot !== rootEventId && eventId !== rootEventId) {
+          return;
+        }
+      }
+      setThread(room.getThread(rootEventId));
+      setTick((n) => n + 1);
+    };
+
+    sync();
+
+    room.on(ThreadEvent.New, sync);
+    room.on(ThreadEvent.Update, sync);
+    room.on(RoomEvent.Timeline, sync);
+    room.on(MatrixEventEvent.Decrypted, sync);
+
+    return () => {
+      room.off(ThreadEvent.New, sync);
+      room.off(ThreadEvent.Update, sync);
+      room.off(RoomEvent.Timeline, sync);
+      room.off(MatrixEventEvent.Decrypted, sync);
+    };
+  }, [room, rootEventId]);
+
+  // Fix 6: when the URL points at a thread root that hasn't been loaded
+  // (deep-link, cold cache), proactively fetch the root. Without this, the
+  // page sticks on "Loading thread root…" forever because nothing else will
+  // populate room.findEventById for that id.
+  useEffect(() => {
+    setRootFetchError(null);
+    setRootFetchAttempted(false);
+    let cancelled = false;
+    const existing = room.getThread(rootEventId) || room.findEventById(rootEventId);
+    if (existing) return undefined;
+
+    (async () => {
+      const [err] = await to(mx.fetchRoomEvent(room.roomId, rootEventId));
+      if (cancelled) return;
+      setRootFetchAttempted(true);
+      if (err) {
+        setRootFetchError('Thread not found in this room.');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mx, room, rootEventId]);
+
+  useEffect(() => {
+    const handler = (event: MatrixEvent) => {
+      if (event.threadRootId !== rootEventId) return;
+      if (!event.isRelation(RelationType.Thread)) return;
+
+      const status = event.status;
+      const inFlight =
+        status === EventStatus.SENDING ||
+        status === EventStatus.QUEUED ||
+        status === EventStatus.ENCRYPTING ||
+        status === EventStatus.SENT ||
+        status === EventStatus.NOT_SENT;
+
+      const txnId = event.getTxnId();
+      setPendingEvents((prev) => {
+        const filtered = prev.filter((p) => {
+          if (!txnId) return true; // can't dedup without a txnId
+          return p.getTxnId() !== txnId;
+        });
+        return inFlight ? [...filtered, event] : filtered;
+      });
+    };
+    room.on(RoomEvent.LocalEchoUpdated, handler);
+    return () => {
+      room.off(RoomEvent.LocalEchoUpdated, handler);
+    };
+  }, [room, rootEventId]);
+
+  // Update stickToBottomRef on every scroll. ~80px below the bottom edge still
+  // counts as "at bottom" so a tiny mouse-wheel nudge doesn't strand the user
+  // away from new replies.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return undefined;
+    const handleScroll = () => {
+      const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      stickToBottomRef.current = distFromBottom < 80;
+    };
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
+
+  const handleBack = useCallback(() => {
+    onBack();
+  }, [onBack]);
+
+  // Make plain history navigation also exit threads — pressing Esc with focus
+  // on the body returns to the room timeline. (Composer Esc is handled by
+  // RoomInput for clearing reply drafts; that takes precedence.)
+  useEffect(() => {
+    const onKey = (evt: KeyboardEvent) => {
+      if (evt.key === 'Escape') {
+        const active = document.activeElement;
+        const isInComposer =
+          active instanceof HTMLElement &&
+          (active.isContentEditable || active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
+        if (!isInComposer) {
+          handleBack();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [handleBack]);
+
+  const mentionClickHandler = useMentionClickHandler(room.roomId);
+  const spoilerClickHandler = useSpoilerClickHandler();
+
+  const linkifyOpts = useMemo<LinkifyOpts>(
+    () => ({
+      ...LINKIFY_OPTS,
+      render: factoryRenderLinkifyWithMention((href) =>
+        renderMatrixMention(mx, room.roomId, href, makeMentionCustomProps(mentionClickHandler))
+      ),
+    }),
+    [mx, room, mentionClickHandler]
+  );
+  const htmlReactParserOptions = useMemo<HTMLReactParserOptions>(
+    () =>
+      getReactCustomHtmlParser(mx, room.roomId, {
+        linkifyOpts,
+        useAuthentication,
+        handleSpoilerClick: spoilerClickHandler,
+        handleMentionClick: mentionClickHandler,
+      }),
+    [mx, room, linkifyOpts, mentionClickHandler, spoilerClickHandler, useAuthentication]
+  );
+
+  const renderContent = useMatrixEventRenderer<[MatrixEvent, string, GetContentCallback]>(
+    {
+      [MessageEvent.RoomMessage]: (event, displayName, getContent) => {
+        if (event.isRedacted()) {
+          return <RedactedContent reason={event.getUnsigned().redacted_because?.content.reason} />;
+        }
+        return (
+          <RenderMessageContent
+            displayName={displayName}
+            msgType={event.getContent().msgtype ?? ''}
+            ts={event.getTs()}
+            getContent={getContent}
+            edited={!!event.replacingEvent()}
+            mediaAutoLoad={mediaAutoLoad}
+            urlPreview={showUrlPreview}
+            htmlReactParserOptions={htmlReactParserOptions}
+            linkifyOpts={linkifyOpts}
+            outlineAttachment
+          />
+        );
+      },
+      [MessageEvent.RoomMessageEncrypted]: (event, displayName) => {
+        const eventId = event.getId();
+        if (!eventId) {
+          return (
+            <Text>
+              <MessageNotDecryptedContent />
+            </Text>
+          );
+        }
+        return (
+          <EncryptedContent mEvent={event}>
+            {() => {
+              if (event.isRedacted()) return <RedactedContent />;
+              if (event.getType() === MessageEvent.RoomMessage) {
+                const editedEvent = getEditedEvent(eventId, event, room.getUnfilteredTimelineSet());
+                const getContent = (() =>
+                  editedEvent?.getContent()['m.new_content'] ??
+                  event.getContent()) as GetContentCallback;
+                return (
+                  <RenderMessageContent
+                    displayName={displayName}
+                    msgType={event.getContent().msgtype ?? ''}
+                    ts={event.getTs()}
+                    edited={!!editedEvent || !!event.replacingEvent()}
+                    getContent={getContent}
+                    mediaAutoLoad={mediaAutoLoad}
+                    urlPreview={showUrlPreview}
+                    htmlReactParserOptions={htmlReactParserOptions}
+                    linkifyOpts={linkifyOpts}
+                    outlineAttachment
+                  />
+                );
+              }
+              if (event.getType() === MessageEvent.Sticker) {
+                return (
+                  <MSticker
+                    content={event.getContent()}
+                    renderImageContent={(props) => (
+                      <ImageContent
+                        {...props}
+                        autoPlay={mediaAutoLoad}
+                        renderImage={(p) => <Image {...p} loading="lazy" />}
+                        renderViewer={(p) => <ImageViewer {...p} />}
+                      />
+                    )}
+                  />
+                );
+              }
+              return (
+                <Text>
+                  <MessageUnsupportedContent />
+                </Text>
+              );
+            }}
+          </EncryptedContent>
+        );
+      },
+    },
+    undefined,
+    (event) => {
+      if (event.isRedacted()) {
+        return <RedactedContent reason={event.getUnsigned().redacted_because?.content.reason} />;
+      }
+      return (
+        <Box grow="Yes" direction="Column">
+          <Text size="T200" priority="300">
+            <code className={customHtmlCss.Code}>{event.getType()}</code>
+            {' event'}
+          </Text>
+        </Box>
+      );
+    }
+  );
+
+  const rootEvent = useMemo(
+    () => thread?.rootEvent ?? room.findEventById(rootEventId),
+    // tick re-evaluates after any thread/timeline mutation so a late-arriving
+    // root in room.findEventById is picked up.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [thread, room, rootEventId, tick]
+  );
+  const replies: MatrixEvent[] = useMemo(() => {
+    const liveEvents: MatrixEvent[] = thread?.liveTimeline.getEvents() ?? [];
+    // Skip:
+    // - the root (rendered separately as the head card)
+    // - edits (m.replace) and reactions (m.annotation), which aggregate onto
+    //   their parent via getEditedEvent / Reactions and shouldn't render as
+    //   their own bubbles
+    // - redacted events when showHiddenEvents is off, matching RoomTimeline.tsx
+    //   so a redacted thread reply doesn't render as a "[Redacted]" placeholder
+    //   that the main timeline would have hidden
+    const messageEvents = liveEvents.filter(
+      (evt) =>
+        evt.getId() !== rootEventId &&
+        !evt.isRelation(RelationType.Replace) &&
+        !evt.isRelation(RelationType.Annotation) &&
+        (showHiddenEvents || !evt.isRedacted())
+    );
+    const liveIds = new Set(messageEvents.map((evt) => evt.getId()));
+    // Merge in pending events that haven't yet been promoted to the live
+    // timeline by remote echo. Dedupe by event id since handleRemoteEcho keeps
+    // the same MatrixEvent reference and updates its id in place.
+    const stillPending = pendingEvents.filter((evt) => {
+      const id = evt.getId();
+      return id ? !liveIds.has(id) : true;
+    });
+    return [...messageEvents, ...stillPending].sort((a, b) => a.getTs() - b.getTs());
+    // tick re-evaluates the live timeline after thread mutations (matrix-js-sdk
+    // reuses the same Thread instance, so thread reference equality is stable).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread, pendingEvents, rootEventId, tick, showHiddenEvents]);
+
+  const canSendReaction = permissions.event(EventType.Reaction, mx.getSafeUserId());
+
+  const handleReactionToggle = useCallback(
+    (targetEventId: string, key: string, shortcode?: string) => {
+      const t = room.getThread(rootEventId);
+      if (!t) {
+        // eslint-disable-next-line no-console
+        console.warn('[ThreadView] reaction toggle: thread not loaded yet');
+        return;
+      }
+      const timelineSet = t.timelineSet;
+      const relations = getEventReactions(timelineSet, targetEventId);
+      const allReactions = relations?.getSortedAnnotationsByKey() ?? [];
+      const [, reactionsSet] = allReactions.find(([k]) => k === key) ?? [];
+      const reactions = reactionsSet ? Array.from(reactionsSet) : [];
+      const myReaction = reactions.find(factoryEventSentBy(mx.getUserId()!));
+
+      if (myReaction && !!myReaction.isRelation()) {
+        mx.redactEvent(room.roomId, myReaction.getId()!).catch((err) =>
+          // eslint-disable-next-line no-console
+          console.error('[ThreadView] reaction toggle failed', err)
+        );
+        return;
+      }
+      const rShortcode =
+        shortcode ||
+        (reactions.find(eventWithShortcode)?.getContent().shortcode as string | undefined);
+      mx.sendEvent(room.roomId, rootEventId, EventType.Reaction, {
+        'm.relates_to': {
+          rel_type: RelationType.Annotation,
+          event_id: targetEventId,
+          key,
+        },
+        ...(rShortcode ? { shortcode: rShortcode } : {}),
+      }).catch((err) =>
+        // eslint-disable-next-line no-console
+        console.error('[ThreadView] reaction toggle failed', err)
+      );
+    },
+    [mx, room, rootEventId]
+  );
+
+  const editTimelineSet = thread?.timelineSet ?? room.getUnfilteredTimelineSet();
+
+  // Stick-to-bottom: after replies render, if the user was at the bottom
+  // (or this is the first paint), scroll to the new bottom so new responses
+  // are visible without a manual scroll. If the user has scrolled up to read
+  // history, leave their position alone.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (!hasAutoScrolledOnceRef.current || stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+      hasAutoScrolledOnceRef.current = true;
+    }
+  }, [replies.length, rootEvent]);
+
+  return (
+    <Page ref={pageRef}>
+      <ThreadViewHeader room={room} onBack={handleBack} />
+      <Box className={css.ThreadViewContentBase} grow="Yes">
+        <Scroll ref={scrollRef} variant="Surface" size="300" visibility="Hover" hideTrack>
+          <Box className={css.ThreadViewContent} direction="Column" gap="400">
+            {rootEvent ? (
+              <ThreadEventItem
+                room={room}
+                mEvent={rootEvent}
+                renderContent={renderContent}
+                reactionRelations={
+                  rootEvent.getId()
+                    ? getEventReactions(editTimelineSet, rootEvent.getId()!)
+                    : undefined
+                }
+                canSendReaction={canSendReaction}
+                onReactionToggle={handleReactionToggle}
+                editTimelineSet={editTimelineSet}
+                hour24Clock={hour24Clock}
+                dateFormatString={dateFormatString}
+              />
+            ) : rootFetchError ? (
+              <Box className={css.ThreadEmpty}>
+                <Text size="T200" priority="300">
+                  {rootFetchError}
+                </Text>
+              </Box>
+            ) : (
+              <Box className={css.ThreadEmpty}>
+                <Text size="T200" priority="300">
+                  {rootFetchAttempted ? 'Loading thread root…' : 'Loading thread root…'}
+                </Text>
+              </Box>
+            )}
+            {replies.length === 0 ? (
+              <Box className={css.ThreadEmpty}>
+                <Text size="T200" priority="300">
+                  No replies yet.
+                </Text>
+              </Box>
+            ) : (
+              replies.map((mEvent) => {
+                const id = mEvent.getId();
+                return (
+                  <ThreadEventItem
+                    key={id}
+                    room={room}
+                    mEvent={mEvent}
+                    renderContent={renderContent}
+                    reactionRelations={id ? getEventReactions(editTimelineSet, id) : undefined}
+                    canSendReaction={canSendReaction}
+                    onReactionToggle={handleReactionToggle}
+                    editTimelineSet={editTimelineSet}
+                    hour24Clock={hour24Clock}
+                    dateFormatString={dateFormatString}
+                  />
+                );
+              })
+            )}
+          </Box>
+        </Scroll>
+      </Box>
+      <Box shrink="No" direction="Column">
+        <div style={{ padding: `0 ${config.space.S400}` }}>
+          {rootFetchError ? (
+            <RoomInputPlaceholder
+              style={{ padding: config.space.S200 }}
+              alignItems="Center"
+              justifyContent="Center"
+            >
+              <Text align="Center">Thread root not loaded</Text>
+            </RoomInputPlaceholder>
+          ) : canMessage ? (
+            <RoomInput
+              editor={editor}
+              roomId={room.roomId}
+              room={room}
+              fileDropContainerRef={pageRef}
+              threadRootId={rootEventId}
+            />
+          ) : (
+            <RoomInputPlaceholder
+              style={{ padding: config.space.S200 }}
+              alignItems="Center"
+              justifyContent="Center"
+            >
+              <Text align="Center">You do not have permission to post in this thread</Text>
+            </RoomInputPlaceholder>
+          )}
+        </div>
+      </Box>
+    </Page>
+  );
+}

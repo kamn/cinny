@@ -206,7 +206,7 @@ type RoomNotificationsGroupProps = {
   mediaAutoLoad?: boolean;
   urlPreview?: boolean;
   hideActivity: boolean;
-  onOpen: (roomId: string, eventId: string) => void;
+  onOpen: (roomId: string, eventId: string, opts?: { threadRootId?: string }) => void;
   legacyUsernameColor?: boolean;
   hour24Clock: boolean;
   dateFormatString: string;
@@ -403,6 +403,12 @@ function RoomNotificationsGroupComp({
     if (!eventId) return;
     onOpen(room.roomId, eventId);
   };
+
+  // For threaded notifications, navigate to the room with ?thread=<root> in
+  // one step so Room.tsx mounts with thread phase already set in the URL.
+  const openInThread = (rootEventId: string, eventId: string) => {
+    onOpen(room.roomId, eventId, { threadRootId: rootEventId });
+  };
   const handleMarkAsRead = () => {
     markAsRead(mx, room.roomId, hideActivity);
   };
@@ -520,7 +526,11 @@ function RoomNotificationsGroupComp({
                   <Box shrink="No" gap="200" alignItems="Center">
                     <Chip
                       data-event-id={event.event_id}
-                      onClick={handleOpenClick}
+                      onClick={
+                        threadRootId
+                          ? () => openInThread(threadRootId, event.event_id)
+                          : handleOpenClick
+                      }
                       variant="Secondary"
                       radii="400"
                     >
@@ -534,6 +544,9 @@ function RoomNotificationsGroupComp({
                     replyEventId={replyEventId}
                     threadRootId={threadRootId}
                     onClick={handleOpenClick}
+                    onThreadClick={
+                      threadRootId ? () => openInThread(threadRootId, event.event_id) : undefined
+                    }
                     getMemberPowerTag={getMemberPowerTag}
                     accessibleTagColors={accessibleTagColors}
                     legacyUsernameColor={legacyUsernameColor}

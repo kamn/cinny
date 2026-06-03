@@ -74,6 +74,8 @@ import {
   roomIdToReplyDraftAtomFamily,
   roomIdToUploadItemsAtomFamily,
   roomUploadAtomFamily,
+  threadMsgDraftAtomFamily,
+  threadReplyDraftAtomFamily,
 } from '../../state/room/roomInputDrafts';
 import { UploadCardRenderer } from '../../components/upload-card';
 import {
@@ -123,9 +125,30 @@ interface RoomInputProps {
   fileDropContainerRef: RefObject<HTMLElement>;
   roomId: string;
   room: Room;
+  /**
+   * When set, the composer is operating inside a thread page. Slate body
+   * drafts and reply drafts are isolated to per-thread atom families so typing
+   * in the thread page does not bleed into the room composer (R11 — Slate
+   * Descendant[] holds plaintext).
+   */
+  threadRootId?: string;
 }
+
+const getDraftAtoms = (roomId: string, threadRootId?: string) => {
+  if (threadRootId) {
+    const key = `${roomId}:${threadRootId}`;
+    return {
+      msgDraftAtom: threadMsgDraftAtomFamily(key),
+      replyDraftAtom: threadReplyDraftAtomFamily(key),
+    };
+  }
+  return {
+    msgDraftAtom: roomIdToMsgDraftAtomFamily(roomId),
+    replyDraftAtom: roomIdToReplyDraftAtomFamily(roomId),
+  };
+};
 export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
-  ({ editor, fileDropContainerRef, roomId, room }, ref) => {
+  ({ editor, fileDropContainerRef, roomId, room, threadRootId }, ref) => {
     const mx = useMatrixClient();
     const useAuthentication = useMediaAuthentication();
     const [enterForNewline] = useSetting(settingsAtom, 'enterForNewline');
@@ -139,8 +162,9 @@ export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
     const powerLevels = usePowerLevelsContext();
     const creators = useRoomCreators(room);
 
-    const [msgDraft, setMsgDraft] = useAtom(roomIdToMsgDraftAtomFamily(roomId));
-    const [replyDraft, setReplyDraft] = useAtom(roomIdToReplyDraftAtomFamily(roomId));
+    const { msgDraftAtom, replyDraftAtom } = getDraftAtoms(roomId, threadRootId);
+    const [msgDraft, setMsgDraft] = useAtom(msgDraftAtom);
+    const [replyDraft, setReplyDraft] = useAtom(replyDraftAtom);
     const replyUserID = replyDraft?.userId;
 
     const powerLevelTags = usePowerLevelTags(room, powerLevels);
@@ -226,6 +250,10 @@ export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
     );
 
     useEffect(() => {
+      // Restore any prior draft body when the composer mounts. Drafts are
+      // stored as Slate Descendant[]; insertFragment merges them into the
+      // current editor selection.
+      if (msgDraft.length === 0) return;
       Transforms.insertFragment(editor, msgDraft);
     }, [editor, msgDraft]);
 
@@ -372,12 +400,36 @@ export const RoomInput = forwardRef<HTMLDivElement, RoomInputProps>(
           content['m.relates_to'].is_falling_back = false;
         }
       }
-      mx.sendMessage(roomId, content as any);
+      // Inside a thread page the composer always sends to that thread, even
+      // when no replyDraft is set (sending the first reply). Otherwise fall back
+      // to the replyDraft's m.thread relation, if any. When threadRootId is set
+      // and content has no m.relates_to, the SDK's addThreadRelationIfNeeded
+      // decorates content with the m.thread relation (and an is_falling_back
+      // reply fallback) when given a threadId — so no manual m.relates_to here.
+      const replyThreadId =
+        replyDraft && replyDraft.relation?.rel_type === RelationType.Thread
+          ? replyDraft.relation.event_id ?? null
+          : null;
+      const threadId: string | null = threadRootId ?? replyThreadId;
+      mx.sendMessage(roomId, threadId, content as any).catch((err) =>
+        // eslint-disable-next-line no-console
+        console.error('[RoomInput] send failed', err)
+      );
       resetEditor(editor);
       resetEditorHistory(editor);
       setReplyDraft(undefined);
       sendTypingStatus(false);
-    }, [mx, roomId, editor, replyDraft, sendTypingStatus, setReplyDraft, isMarkdown, commands]);
+    }, [
+      mx,
+      roomId,
+      editor,
+      replyDraft,
+      sendTypingStatus,
+      setReplyDraft,
+      isMarkdown,
+      commands,
+      threadRootId,
+    ]);
 
     const handleKeyDown: KeyboardEventHandler = useCallback(
       (evt) => {
